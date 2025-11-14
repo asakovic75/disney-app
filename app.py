@@ -1,0 +1,177 @@
+import streamlit as st
+import pandas as pd
+import requests
+import re
+
+# --- НАСТРОЙКА ---
+# API ключ будет безопасно браться из секретного хранилища Streamlit.
+TMDB_API_KEY = st.secrets.get("TMDB_API_KEY", "YOUR_TMDB_API_KEY_HERE")
+tmdb_api_base_url = "https://api.themoviedb.org/3"
+
+
+# --- ФУНКЦИИ ЗАГРУЗКИ И ОЧИСТКИ ДАННЫХ ---
+
+@st.cache_data
+def load_data():
+    """Загружает CSV файлы (Произведения, Анонсы, Исполнители) и кэширует их."""
+    try:
+        data = {
+            "works": pd.read_csv("Произведения.csv"),
+            "announcements": pd.read_csv("Анонсы.csv"),
+            "performers": pd.read_csv("Исполнители.csv"),
+        }
+        return data
+    except FileNotFoundError as e:
+        st.error(
+            f"Ошибка: Не найден файл {e.filename}. Убедитесь, что CSV файлы ('Произведения.csv', 'Анонсы.csv', 'Исполнители.csv') находятся в той же папке, что и app.py.")
+        return None
+
+
+def clean_notion_links(text):
+    """Очищает текст от ссылок Notion, лишних символов и возвращает список строк."""
+    if not isinstance(text, str):
+        return ["-"]
+    cleaned_text = re.sub(r"\(https://www.notion.so/[^)]+\)", "", text)
+    items = [item.strip().strip('"') for item in cleaned_text.split(',')]
+    return items
+
+
+def display_list(items_list, title):
+    """Красиво отображает список элементов под раскрывающимся заголовком."""
+    with st.expander(title):
+        if items_list and items_list != ['-']:
+            for item in items_list:
+                st.markdown(f"- {item.strip()}")
+        else:
+            st.write("-")
+
+
+# --- ФУНКЦИИ ПОИСКА ---
+
+def find_entity_by_name(query, dataframe, column_name="Name"):
+    """Универсальная функция поиска по названию в любом DataFrame."""
+    if dataframe is None or not query:
+        return None
+    result = dataframe[dataframe[column_name].str.contains(query, case=False, na=False)]
+    return result if not result.empty else None
+
+
+def search_on_tmdb(query):
+    """Ищет фильм в интернете (TMDb)."""
+    if not TMDB_API_KEY or TMDB_API_KEY == "YOUR_TMDB_API_KEY_HERE":
+        st.warning("Ключ API для TMDb не настроен. Поиск в интернете недоступен.")
+        return None
+
+    search_url = f"{tmdb_api_base_url}/search/movie"
+    params = {"api_key": TMDB_API_KEY, "query": query, "language": "ru-RU"}
+    try:
+        response = requests.get(search_url, params=params)
+        response.raise_for_status()
+        data = response.json()
+        if data.get("results"):
+            movie = data["results"][0]
+            poster_path = movie.get("poster_path")
+            poster_url = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else None
+            return {
+                "title": movie.get("title"),
+                "overview": movie.get("overview"),
+                "vote_average": movie.get("vote_average"),
+                "poster_url": poster_url,
+                "release_date": movie.get("release_date")
+            }
+    except Exception as e:
+        st.error(f"Ошибка при запросе к TMDb: {e}")
+    return None
+
+
+# --- ГЛАВНАЯ ЧАСТЬ ПРИЛОЖЕНИЯ ---
+
+st.set_page_config(page_title="Disney DB Search", layout="wide")
+st.title("🪄 Ассистент по базе данных Disney")
+
+dataframes = load_data()
+
+if dataframes:
+    st.sidebar.title("Навигация")
+    search_type = st.sidebar.radio(
+        "Выберите раздел для поиска:",
+        ("Произведение", "Анонс", "Исполнитель")
+    )
+
+    if search_type == "Произведение":
+        st.header("🎬 Поиск по произведениям")
+        query = st.text_input("Введите название произведения:", "Король лев")
+        if st.button("🔍 Найти", key="work_search"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("📊 В вашей базе данных")
+                results = find_entity_by_name(query, dataframes["works"])
+                if results is not None:
+                    for _, row in results.iterrows():
+                        st.success(f"**{row['Name']}** ({int(row.get('Год выпуска', 0))})")
+                        st.write(f"**Тип:** {row.get('Тип', '-')}")
+                        st.write(f"**Рейтинг:** {row.get('Рейтинг', '-')} | **Возраст:** {row.get('Возраст', '-')}")
+                        st.write(f"**Жанр:** {row.get('Жанр', '-')}")
+                        st.write(f"**Студия:** {clean_notion_links(row.get('Студия', ''))[0]}")
+                        st.write(f"**Бюджет и сборы:** {row.get('Бюджет и сборы', '-')}")
+                        st.write(f"**Награды:** {row.get('Награды', '-')}")
+                        display_list(clean_notion_links(row.get('Персонажи')), "Персонажи")
+                        display_list(clean_notion_links(row.get('Исполнители')), "Исполнители")
+                        display_list(clean_notion_links(row.get('Песни')), "Песни")
+                        st.divider()
+                else:
+                    st.warning("В вашей базе ничего не найдено.")
+
+            with col2:
+                st.subheader("🌐 Найдено в интернете (TMDb)")
+                tmdb_result = search_on_tmdb(query)
+                if tmdb_result:
+                    st.info(f"**{tmdb_result['title']}**")
+                    if tmdb_result['poster_url']:
+                        st.image(tmdb_result['poster_url'], width=200)
+                    st.write(f"**Дата выхода:** {tmdb_result.get('release_date', 'N/A')}")
+                    st.write(f"**Рейтинг зрителей:** {tmdb_result.get('vote_average', 'N/A')} / 10")
+                    st.caption("Описание:")
+                    st.write(tmdb_result.get('overview', 'Нет описания.'))
+                else:
+                    st.info("В интернете ничего не найдено.")
+
+    elif search_type == "Анонс":
+        st.header("🗓️ Поиск по анонсам")
+        query = st.text_input("Введите название анонсированного проекта:", "Зверополис 2")
+        if st.button("🔍 Найти", key="announcement_search"):
+            results = find_entity_by_name(query, dataframes["announcements"])
+            if results is not None:
+                for _, row in results.iterrows():
+                    st.success(f"**{row['Name']}**")
+                    st.write(f"**Официальное название:** {row.get('Официальное название', '-')}")
+                    st.write(f"**Статус:** {row.get('Статус производства', '-')}")
+                    st.write(f"**Планируемая дата:** {row.get('Планируемая дата выхода', '-')}")
+                    st.write(f"**Студия:** {clean_notion_links(row.get('Студия-производитель', ''))[0]}")
+                    st.write(f"**Тематика:** {row.get('Тематика', '-')}")
+                    st.write(f"**Тип:** {row.get('Тип', '-')}")
+                    st.write(f"**Целевая аудитория:** {row.get('Целевая аудитория', '-')}")
+                    st.divider()
+            else:
+                st.warning("В базе ничего не найдено.")
+
+    elif search_type == "Исполнитель":
+        st.header("👤 Поиск по исполнителям")
+        query = st.text_input("Введите имя исполнителя:", "Том Хэнкс")
+        if st.button("🔍 Найти", key="performer_search"):
+            results = find_entity_by_name(query, dataframes["performers"])
+            if results is not None:
+                for _, row in results.iterrows():
+                    st.success(f"**{row['Name']}**")
+                    st.write(f"**Карьера:** {row.get('Карьера', '-')}")
+                    st.write(
+                        f"**Дата рождения:** {row.get('Дата рождения', '-')} | **Дата смерти:** {row.get('Дата смерти', 'Неизвестно')}")
+                    st.write(f"**Место рождения:** {row.get('Место рождения', '-')}")
+                    st.write(f"**Всего проектов:** {row.get('Всего проектов', '-')}")
+                    st.write(f"**Рост:** {row.get('Рост', '-')} м")
+                    display_list(clean_notion_links(row.get('Фильмография', '')), "Фильмография")
+                    display_list(clean_notion_links(row.get('Сыгранные/озвученные персонажи', '')),
+                                 "Сыгранные/озвученные персонажи")
+                    st.divider()
+            else:
+                st.warning("В базе ничего не найдено.")
