@@ -4,10 +4,19 @@ import requests
 import re
 
 # --- НАСТРОЙКА ---
-# API ключ будет безопасно браться из секретного хранилища Streamlit.
-# Если запускаете локально и секрета нет, подставьте ключ сюда для теста.
 TMDB_API_KEY = st.secrets.get("TMDB_API_KEY", "YOUR_TMDB_API_KEY_HERE") 
 tmdb_api_base_url = "https://api.themoviedb.org/3"
+
+# ID компаний Disney и ее дочерних студий для фильтрации
+DISNEY_COMPANY_IDS = {
+    2,       # Walt Disney Pictures
+    3,       # Pixar
+    6125,    # Walt Disney Animation Studios
+    420,     # Marvel Studios
+    1,       # Lucasfilm Ltd.
+    10282,   # Searchlight Pictures (ранее Fox Searchlight)
+    127928   # 20th Century Studios (ранее 20th Century Fox)
+}
 
 # --- ФУНКЦИИ-ПОМОЩНИКИ ---
 
@@ -19,12 +28,11 @@ def load_data():
             "works": pd.read_csv("Произведения.csv"),
             "performers": pd.read_csv("Исполнители.csv"),
         }
-        # Приводим колонки с именами к строковому типу для надежного поиска
         data["works"]["Name"] = data["works"]["Name"].astype(str)
         data["performers"]["Name"] = data["performers"]["Name"].astype(str)
         return data
     except FileNotFoundError as e:
-        st.error(f"Ошибка: Не найден файл {e.filename}. Убедитесь, что CSV файлы ('Произведения.csv', 'Исполнители.csv') находятся в той же папке.")
+        st.error(f"Ошибка: Не найден файл {e.filename}.")
         return None
 
 def find_entity_by_name(query, dataframe):
@@ -42,7 +50,7 @@ def clean_notion_links(text):
     return items
 
 def display_field(label, value, extra=""):
-    """Отображает строку 'Метка: Значение', только если значение существует (не пустое, не NaN, не '-')"""
+    """Отображает строку 'Метка: Значение', только если значение существует."""
     if pd.notna(value) and str(value).strip() not in ['', '-']:
         st.write(f"**{label}:** {value}{extra}")
 
@@ -57,14 +65,12 @@ def display_list(items_list, title):
 # --- ФУНКЦИИ ПОИСКА В TMDB ---
 
 def get_movie_details(query, year=None):
-    """Ищет фильмы/мультфильмы в TMDb и возвращает СПИСОК до 10 результатов."""
+    """Ищет фильмы TMDb, ФИЛЬТРУЕТ по компаниям Disney и возвращает СПИСОК."""
     if not TMDB_API_KEY or TMDB_API_KEY == "YOUR_TMDB_API_KEY_HERE": return []
     
-    # Умная обработка запроса: используем текст до двоеточия для поиска
     search_query = query.split(':')[0].strip() if ':' in query else query
-
     search_url = f"{tmdb_api_base_url}/search/movie"
-    params = {"api_key": TMDB_API_KEY, "query": search_query, "language": "ru-RU"}
+    params = {"api_key": TMDB_API_KEY, "query": search_query, "language": "ru-RU", "page": 1}
     if year:
         params['primary_release_year'] = year
     
@@ -73,24 +79,37 @@ def get_movie_details(query, year=None):
         response.raise_for_status()
         data = response.json()
         
-        results = []
-        for movie in data.get("results", [])[:10]: # Показываем до 10 результатов
-            poster_path = movie.get("poster_path")
-            results.append({
-                "title": movie.get("title"),
-                "overview": movie.get("overview", "Сюжет не найден."),
-                "image_url": f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else None,
-                "release_date": movie.get("release_date"),
-                "vote_average": movie.get("vote_average")
-            })
-        return results
+        disney_movies = []
+        for movie_summary in data.get("results", []):
+            movie_id = movie_summary.get("id")
+            if not movie_id: continue
+
+            details_url = f"{tmdb_api_base_url}/movie/{movie_id}"
+            details_params = {"api_key": TMDB_API_KEY, "language": "ru-RU"}
+            details_response = requests.get(details_url, params=details_params)
+            movie_details = details_response.json()
+            
+            # Проверяем компании
+            producer_ids = {company['id'] for company in movie_details.get("production_companies", [])}
+            if producer_ids.intersection(DISNEY_COMPANY_IDS):
+                poster_path = movie_details.get("poster_path")
+                disney_movies.append({
+                    "title": movie_details.get("title"),
+                    "overview": movie_details.get("overview", "Сюжет не найден."),
+                    "image_url": f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else None,
+                    "release_date": movie_details.get("release_date"),
+                    "vote_average": movie_details.get("vote_average")
+                })
+            if len(disney_movies) >= 10: # Ограничиваем до 10 Disney-фильмов
+                break
+        return disney_movies
     except requests.exceptions.RequestException:
         return []
 
 def get_person_details(query):
     """Ищет людей в TMDb и возвращает СПИСОК до 10 результатов."""
     if not TMDB_API_KEY or TMDB_API_KEY == "YOUR_TMDB_API_KEY_HERE": return []
-
+    # ... (код для этой функции остается без изменений) ...
     search_url = f"{tmdb_api_base_url}/search/person"
     params = {"api_key": TMDB_API_KEY, "query": query, "language": "ru-RU"}
     
@@ -100,7 +119,7 @@ def get_person_details(query):
         data = response.json()
         
         results = []
-        for person_summary in data.get("results", [])[:10]: # Показываем до 10 результатов
+        for person_summary in data.get("results", [])[:10]:
             person_id = person_summary.get("id")
             if not person_id: continue
 
@@ -139,15 +158,15 @@ if dataframes:
         query = st.text_input("Введите название произведения:", "Красавица и чудовище")
         if st.button("🔍 Найти", key="work_search"):
             
-            displayed_items = set() # Будем хранить пары (название, год) для проверки дублей
+            displayed_items = set() 
             local_results = find_entity_by_name(query, dataframes["works"])
             
             if local_results is not None:
                 st.subheader("📊 Результаты из вашей базы данных")
                 for _, row in local_results.iterrows():
                     year = int(row['Год выпуска']) if pd.notna(row['Год выпуска']) else 0
-                    # Добавляем в 'просмотренные' название и год
-                    displayed_items.add((row['Name'].strip().lower(), year))
+                    title_cleaned = row['Name'].split(':')[0].strip().lower()
+                    displayed_items.add((title_cleaned, year))
                     
                     details_list = get_movie_details(row["Name"], year=year)
                     details = details_list[0] if details_list else None
@@ -170,7 +189,6 @@ if dataframes:
 
                     if details and details['overview']:
                         with st.expander("Сюжет"): st.write(details['overview'])
-
                     display_list(clean_notion_links(row.get('Персонажи')), "Персонажи")
                     display_list(clean_notion_links(row.get('Исполнители')), "Исполнители")
                     display_list(clean_notion_links(row.get('Песни')), "Песни")
@@ -187,10 +205,9 @@ if dataframes:
                     release_date = internet_result.get('release_date')
                     internet_year = int(release_date.split('-')[0]) if release_date and '-' in release_date else 0
                     
-                    # Проверяем дубликат по названию и году
-                    check_tuple = (internet_result['title'].strip().lower(), internet_year)
+                    check_tuple = (internet_result['title'].split(':')[0].strip().lower(), internet_year)
                     if check_tuple in displayed_items:
-                        continue # Пропускаем, если уже показали
+                        continue 
                     
                     new_results_found = True
                     st.markdown(f"<div style='background-color:#17a2b8; padding: 10px; border-radius: 5px; color: white; margin-bottom: 10px;'><b>{internet_result['title']}</b></div>", unsafe_allow_html=True)
@@ -235,7 +252,6 @@ if dataframes:
                     
                     if details and details['biography']:
                         with st.expander("Биография"): st.write(details['biography'])
-
                     display_list(clean_notion_links(row.get('Фильмография')), "Фильмография")
                     display_list(clean_notion_links(row.get('Сыгранные/озвученные персонажи')), "Персонажи")
                     st.divider()
