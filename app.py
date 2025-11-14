@@ -4,8 +4,6 @@ import requests
 import re
 
 # --- НАСТРОЙКА ---
-# API ключ будет безопасно браться из секретного хранилища Streamlit.
-# Если запускаете локально и секрета нет, подставьте ключ сюда для теста.
 TMDB_API_KEY = st.secrets.get("TMDB_API_KEY", "YOUR_TMDB_API_KEY_HERE") 
 tmdb_api_base_url = "https://api.themoviedb.org/3"
 
@@ -19,12 +17,11 @@ def load_data():
             "works": pd.read_csv("Произведения.csv"),
             "performers": pd.read_csv("Исполнители.csv"),
         }
-        # Приводим колонки с именами к строковому типу для надежного поиска
         data["works"]["Name"] = data["works"]["Name"].astype(str)
         data["performers"]["Name"] = data["performers"]["Name"].astype(str)
         return data
     except FileNotFoundError as e:
-        st.error(f"Ошибка: Не найден файл {e.filename}. Убедитесь, что CSV файлы ('Произведения.csv', 'Исполнители.csv') находятся в той же папке.")
+        st.error(f"Ошибка: Не найден файл {e.filename}.")
         return None
 
 def find_entity_by_name(query, dataframe):
@@ -42,7 +39,7 @@ def clean_notion_links(text):
     return items
 
 def display_field(label, value, extra=""):
-    """Отображает строку 'Метка: Значение', только если значение существует (не пустое, не NaN, не '-')"""
+    """Отображает строку 'Метка: Значение', только если значение существует."""
     if pd.notna(value) and str(value).strip() not in ['', '-']:
         st.write(f"**{label}:** {value}{extra}")
 
@@ -57,12 +54,10 @@ def display_list(items_list, title):
 # --- ФУНКЦИИ ПОИСКА В TMDB ---
 
 def get_movie_details(query, year=None):
-    """Ищет фильм/мультфильм в TMDb и возвращает полную информацию."""
-    if not TMDB_API_KEY or TMDB_API_KEY == "YOUR_TMDB_API_KEY_HERE": return None
+    """Ищет фильмы/мультфильмы в TMDb и возвращает СПИСОК результатов."""
+    if not TMDB_API_KEY or TMDB_API_KEY == "YOUR_TMDB_API_KEY_HERE": return []
     
-    # Умная обработка запроса: используем текст до двоеточия для поиска
     search_query = query.split(':')[0].strip() if ':' in query else query
-
     search_url = f"{tmdb_api_base_url}/search/movie"
     params = {"api_key": TMDB_API_KEY, "query": search_query, "language": "ru-RU"}
     if year:
@@ -72,24 +67,26 @@ def get_movie_details(query, year=None):
         response = requests.get(search_url, params=params)
         response.raise_for_status()
         data = response.json()
-        if not data.get("results"): return None
-
-        movie = data["results"][0]
-        poster_path = movie.get("poster_path")
-        return {
-            "title": movie.get("title"),
-            "overview": movie.get("overview", "Сюжет не найден."),
-            "image_url": f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else None,
-            "release_date": movie.get("release_date"),
-            "vote_average": movie.get("vote_average")
-        }
+        
+        results = []
+        # Ограничиваем до 5, чтобы не перегружать интерфейс
+        for movie in data.get("results", [])[:5]:
+            poster_path = movie.get("poster_path")
+            results.append({
+                "title": movie.get("title"),
+                "overview": movie.get("overview", "Сюжет не найден."),
+                "image_url": f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else None,
+                "release_date": movie.get("release_date"),
+                "vote_average": movie.get("vote_average")
+            })
+        return results
     except requests.exceptions.RequestException:
-        return None
+        return []
 
 def get_person_details(query):
-    """Ищет человека в TMDb и возвращает расширенную информацию."""
-    if not TMDB_API_KEY or TMDB_API_KEY == "YOUR_TMDB_API_KEY_HERE": return None
-    
+    """Ищет людей в TMDb и возвращает СПИСОК результатов."""
+    if not TMDB_API_KEY or TMDB_API_KEY == "YOUR_TMDB_API_KEY_HERE": return []
+
     search_url = f"{tmdb_api_base_url}/search/person"
     params = {"api_key": TMDB_API_KEY, "query": query, "language": "ru-RU"}
     
@@ -97,28 +94,31 @@ def get_person_details(query):
         response = requests.get(search_url, params=params)
         response.raise_for_status()
         data = response.json()
-        if not data.get("results"): return None
-
-        person_id = data["results"][0].get("id")
-        if not person_id: return None
-
-        details_url = f"{tmdb_api_base_url}/person/{person_id}"
-        details_params = {"api_key": TMDB_API_KEY, "language": "ru-RU"}
-        details_response = requests.get(details_url, params=details_params)
-        details_response.raise_for_status()
-        details = details_response.json()
         
-        profile_path = details.get("profile_path")
-        return {
-            "name": details.get("name"),
-            "biography": details.get("biography", "Биография не найдена."),
-            "image_url": f"https://image.tmdb.org/t/p/w500{profile_path}" if profile_path else None,
-            "birthday": details.get("birthday"),
-            "place_of_birth": details.get("place_of_birth"),
-            "known_for": details.get("known_for_department")
-        }
+        results = []
+        # Ограничиваем до 5
+        for person_summary in data.get("results", [])[:5]:
+            person_id = person_summary.get("id")
+            if not person_id: continue
+
+            details_url = f"{tmdb_api_base_url}/person/{person_id}"
+            details_params = {"api_key": TMDB_API_KEY, "language": "ru-RU"}
+            details_response = requests.get(details_url, params=details_params)
+            details_response.raise_for_status()
+            details = details_response.json()
+            
+            profile_path = details.get("profile_path")
+            results.append({
+                "name": details.get("name"),
+                "biography": details.get("biography", "Биография не найдена."),
+                "image_url": f"https://image.tmdb.org/t/p/w500{profile_path}" if profile_path else None,
+                "birthday": details.get("birthday"),
+                "place_of_birth": details.get("place_of_birth"),
+                "known_for": details.get("known_for_department")
+            })
+        return results
     except requests.exceptions.RequestException:
-        return None
+        return []
 
 # --- ГЛАВНАЯ ЧАСТЬ ПРИЛОЖЕНИЯ ---
 
@@ -142,16 +142,18 @@ if dataframes:
             if local_results is not None:
                 st.subheader("📊 Результаты из вашей базы данных")
                 for _, row in local_results.iterrows():
-                    displayed_titles.add(row['Name'].strip())
+                    title_cleaned = row['Name'].strip()
+                    displayed_titles.add(title_cleaned)
                     year = int(row['Год выпуска']) if pd.notna(row['Год выпуска']) else None
-                    details = get_movie_details(row["Name"], year=year)
+                    details_list = get_movie_details(row["Name"], year=year)
+                    details = details_list[0] if details_list else None
                     
+                    st.markdown(f"<div style='background-color:#28a745; padding: 10px; border-radius: 5px; color: white; margin-bottom: 10px;'><b>{row['Name']}</b></div>", unsafe_allow_html=True)
                     col1, col2 = st.columns([1, 2.5])
                     with col1:
                         if details and details['image_url']:
                             st.image(details['image_url'])
                     with col2:
-                        st.markdown(f"<div style='background-color:#28a745; padding: 10px; border-radius: 5px; color: white; margin-bottom: 10px;'><b>{row['Name']}</b></div>", unsafe_allow_html=True)
                         display_field("Год выпуска", year)
                         display_field("Тип", row.get('Тип'))
                         display_field("Жанр", row.get('Жанр'))
@@ -164,7 +166,6 @@ if dataframes:
 
                     if details and details['overview']:
                         with st.expander("Сюжет"): st.write(details['overview'])
-
                     display_list(clean_notion_links(row.get('Персонажи')), "Персонажи")
                     display_list(clean_notion_links(row.get('Исполнители')), "Исполнители")
                     display_list(clean_notion_links(row.get('Песни')), "Песни")
@@ -173,24 +174,26 @@ if dataframes:
                 st.warning("В вашей базе ничего не найдено.")
 
             st.subheader("🌐 Найдено в интернете (TMDb)")
-            internet_result = get_movie_details(query)
+            internet_results = get_movie_details(query)
             
-            if internet_result:
-                is_duplicate = any(internet_result['title'].strip() in title for title in displayed_titles)
-                if is_duplicate:
-                    st.info("Наиболее релевантный результат из интернета уже показан выше из вашей базы данных.")
-                else:
-                    col1, col2 = st.columns([1, 2.5])
-                    with col1:
-                        if internet_result['image_url']: st.image(internet_result['image_url'])
-                    with col2:
+            new_results_found = False
+            if internet_results:
+                for internet_result in internet_results:
+                    if internet_result['title'].strip() not in displayed_titles:
+                        new_results_found = True
                         st.markdown(f"<div style='background-color:#17a2b8; padding: 10px; border-radius: 5px; color: white; margin-bottom: 10px;'><b>{internet_result['title']}</b></div>", unsafe_allow_html=True)
-                        display_field("Дата релиза", internet_result.get('release_date'))
-                        display_field("Рейтинг зрителей", f"{internet_result.get('vote_average'):.1f} / 10" if internet_result.get('vote_average') else None)
-                        with st.expander("Сюжет"):
-                            st.write(internet_result.get('overview'))
-            else:
-                st.error("По вашему запросу в интернете ничего не найдено.")
+                        col1, col2 = st.columns([1, 2.5])
+                        with col1:
+                            if internet_result['image_url']: st.image(internet_result['image_url'])
+                        with col2:
+                            display_field("Дата релиза", internet_result.get('release_date'))
+                            display_field("Рейтинг зрителей", f"{internet_result.get('vote_average'):.1f} / 10" if internet_result.get('vote_average') else None)
+                            with st.expander("Сюжет"):
+                                st.write(internet_result.get('overview'))
+                        st.divider()
+            
+            if not new_results_found:
+                st.info("Все релевантные результаты из интернета уже показаны в вашей базе данных или не найдены.")
 
     elif search_type == "Исполнитель":
         st.header("👤 Поиск по исполнителям")
@@ -201,12 +204,14 @@ if dataframes:
             if local_results is not None:
                 st.subheader("📊 Результаты из вашей базы данных")
                 for _, row in local_results.iterrows():
-                    details = get_person_details(row["Name"])
+                    details_list = get_person_details(row["Name"])
+                    details = details_list[0] if details_list else None
+                    
+                    st.markdown(f"<div style='background-color:#28a745; padding: 10px; border-radius: 5px; color: white; margin-bottom: 10px;'><b>{row['Name']}</b></div>", unsafe_allow_html=True)
                     col1, col2 = st.columns([1, 2.5])
                     with col1:
                         if details and details['image_url']: st.image(details['image_url'])
                     with col2:
-                        st.markdown(f"<div style='background-color:#28a745; padding: 10px; border-radius: 5px; color: white; margin-bottom: 10px;'><b>{row['Name']}</b></div>", unsafe_allow_html=True)
                         display_field("Карьера", row.get('Карьера'))
                         display_field("Дата рождения", row.get('Дата рождения'))
                         display_field("Знак зодиака", row.get('Знак зодиака'))
@@ -218,25 +223,26 @@ if dataframes:
                     
                     if details and details['biography']:
                         with st.expander("Биография"): st.write(details['biography'])
-
                     display_list(clean_notion_links(row.get('Фильмография')), "Фильмография")
                     display_list(clean_notion_links(row.get('Сыгранные/озвученные персонажи')), "Персонажи")
                     st.divider()
             else:
                 st.warning("В вашей базе ничего не найдено. Выполняется поиск в интернете...")
-                internet_result = get_person_details(query)
-                if internet_result:
+                internet_results = get_person_details(query)
+                if internet_results:
                     st.subheader("🌐 Найдено в интернете (TMDb)")
-                    col1, col2 = st.columns([1, 2.5])
-                    with col1:
-                        if internet_result['image_url']: st.image(internet_result['image_url'])
-                    with col2:
+                    for internet_result in internet_results:
                         st.markdown(f"<div style='background-color:#17a2b8; padding: 10px; border-radius: 5px; color: white; margin-bottom: 10px;'><b>{internet_result['name']}</b></div>", unsafe_allow_html=True)
-                        display_field("Основная деятельность", internet_result.get('known_for'))
-                        display_field("Дата рождения", internet_result.get('birthday'))
-                        display_field("Место рождения", internet_result.get('place_of_birth'))
-                    
-                    if internet_result['biography']:
-                        with st.expander("Биография"): st.write(internet_result['biography'])
+                        col1, col2 = st.columns([1, 2.5])
+                        with col1:
+                            if internet_result['image_url']: st.image(internet_result['image_url'])
+                        with col2:
+                            display_field("Основная деятельность", internet_result.get('known_for'))
+                            display_field("Дата рождения", internet_result.get('birthday'))
+                            display_field("Место рождения", internet_result.get('place_of_birth'))
+                        
+                        if internet_result['biography']:
+                            with st.expander("Биография"): st.write(internet_result['biography'])
+                        st.divider()
                 else:
                     st.error("В интернете также ничего не найдено.")
