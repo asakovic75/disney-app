@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import requests
 import re
+import base64
+from io import BytesIO
 
 # --- НАСТРОЙКА ---
 TMDB_API_KEY = st.secrets.get("TMDB_API_KEY", "YOUR_TMDB_API_KEY_HERE") 
@@ -10,7 +12,24 @@ tmdb_api_base_url = "https://api.themoviedb.org/3"
 # ID компаний Disney и ее дочерних студий для фильтрации
 DISNEY_COMPANY_IDS_STR = "2|3|6125|420|1|10282|127928"
 
-# --- ФУНКЦИИ-ПОМОЩНИКИ ---
+# --- НОВАЯ ФУНКЦИЯ ДЛЯ ОБРАБОТКИ ИЗОБРАЖЕНИЙ ---
+@st.cache_data
+def get_image_as_base64(url):
+    """Загружает изображение по URL и кодирует его в Base64, чтобы обойти ограничения Notion."""
+    if not url or not url.startswith("http"):
+        return None
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        # Преобразуем изображение в Base64
+        encoded_string = base64.b64encode(response.content).decode()
+        # Возвращаем строку в формате Data URI
+        return f"data:image/png;base64,{encoded_string}"
+    except requests.exceptions.RequestException:
+        # В случае ошибки загрузки вернем None
+        return None
+
+# --- ФУНКЦИИ-ПОМОЩНИКИ (без изменений) ---
 
 @st.cache_data
 def load_data():
@@ -53,7 +72,7 @@ def display_list(items_list, title):
         else:
             st.write("Нет данных.")
 
-# --- ФУНКЦИИ ПОИСКА В TMDB (ОБНОВЛЕННЫЕ) ---
+# --- ФУНКЦИИ ПОИСКА В TMDB (без изменений) ---
 
 def get_movie_details(query, year=None):
     """Ищет фильмы TMDb, фильтрует по Disney через API и возвращает ПОДРОБНЫЙ список."""
@@ -151,7 +170,7 @@ def get_person_details(query):
     except requests.exceptions.RequestException:
         return []
 
-# --- ГЛАВНАЯ ЧАСТЬ ПРИЛОЖЕНИЯ ---
+# --- ГЛАВНАЯ ЧАСТЬ ПРИЛОЖЕНИЯ (с изменениями) ---
 
 st.set_page_config(page_title="Умный поиск по миру Disney", layout="wide")
 st.title("✨ Умный поиск по миру Disney")
@@ -184,8 +203,11 @@ if dataframes:
                     st.markdown(f"<div style='background-color:#28a745; padding: 10px; border-radius: 5px; color: white; margin-bottom: 10px;'><b>{row['Name']}</b></div>", unsafe_allow_html=True)
                     col1, col2 = st.columns([1, 2.5])
                     with col1:
+                        # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
                         if details and details['image_url']:
-                            st.image(details['image_url'])
+                            base64_image = get_image_as_base64(details['image_url'])
+                            if base64_image:
+                                st.image(base64_image)
                     with col2:
                         display_field("Год выпуска", year if year != 0 else "Не указан")
                         display_field("Тип", row.get('Тип'))
@@ -222,7 +244,11 @@ if dataframes:
                     st.markdown(f"<div style='background-color:#17a2b8; padding: 10px; border-radius: 5px; color: white; margin-bottom: 10px;'><b>{internet_result['title']}</b></div>", unsafe_allow_html=True)
                     col1, col2 = st.columns([1, 2.5])
                     with col1:
-                        if internet_result['image_url']: st.image(internet_result['image_url'])
+                        # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+                        if internet_result['image_url']:
+                            base64_image = get_image_as_base64(internet_result['image_url'])
+                            if base64_image:
+                                st.image(base64_image)
                     with col2:
                         display_field("Дата релиза", internet_result.get('release_date'))
                         display_field("Рейтинг зрителей", f"{internet_result.get('vote_average'):.1f} / 10" if internet_result.get('vote_average') else None)
@@ -254,7 +280,11 @@ if dataframes:
                     st.markdown(f"<div style='background-color:#28a745; padding: 10px; border-radius: 5px; color: white; margin-bottom: 10px;'><b>{row['Name']}</b></div>", unsafe_allow_html=True)
                     col1, col2 = st.columns([1, 2.5])
                     with col1:
-                        if details and details['image_url']: st.image(details['image_url'])
+                        # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+                        if details and details['image_url']:
+                            base64_image = get_image_as_base64(details['image_url'])
+                            if base64_image:
+                                st.image(base64_image)
                     with col2:
                         display_field("Карьера", row.get('Карьера'))
                         display_field("Дата рождения", row.get('Дата рождения'))
@@ -283,7 +313,11 @@ if dataframes:
                         st.markdown(f"<div style='background-color:#17a2b8; padding: 10px; border-radius: 5px; color: white; margin-bottom: 10px;'><b>{internet_result['name']}</b></div>", unsafe_allow_html=True)
                         col1, col2 = st.columns([1, 2.5])
                         with col1:
-                            if internet_result['image_url']: st.image(internet_result['image_url'])
+                             # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+                            if internet_result['image_url']:
+                                base64_image = get_image_as_base64(internet_result['image_url'])
+                                if base64_image:
+                                    st.image(base64_image)
                         with col2:
                             display_field("Основная деятельность", internet_result.get('known_for'))
                             display_field("Дата рождения", internet_result.get('birthday'))
@@ -297,4 +331,3 @@ if dataframes:
                         st.divider()
                 else:
                     st.error("В интернете также ничего не найдено.")
-
