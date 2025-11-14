@@ -6,8 +6,8 @@ import re
 # --- НАСТРОЙКА ---
 TMDB_API_KEY = st.secrets.get("TMDB_API_KEY", "YOUR_TMDB_API_KEY_HERE")
 tmdb_api_base_url = "https://api.themoviedb.org/3"
-POSTER_BASE_URL = "https://image.tmdb.org/t/p/w400"
-PROFILE_BASE_URL = "https://image.tmdb.org/t/p/w400"
+POSTER_BASE_URL = "https://image.tmdb.org/t/p/w400" # URL для постеров
+PROFILE_BASE_URL = "https://image.tmdb.org/t/p/w400" # URL для фото актеров
 
 # --- ФУНКЦИИ ЗАГРУЗКИ И ОЧИСТКИ ДАННЫХ ---
 
@@ -25,9 +25,12 @@ def load_data():
         return None
 
 def clean_notion_links(text):
-    """Очищает текст от ссылок Notion и лишних символов, возвращает список строк."""
-    if not isinstance(text, str): return ["-"]
+    """Очищает текст от ссылок Notion, лишних символов и возвращает список строк."""
+    if not isinstance(text, str):
+        return ["-"]
+    # Удаляем URL Notion
     cleaned_text = re.sub(r"\(https://www.notion.so/[^)]+\)", "", text)
+    # Разделяем по запятым и убираем лишние пробелы/кавычки у каждого элемента
     items = [item.strip().strip('"') for item in cleaned_text.split(',')]
     return items
 
@@ -59,7 +62,9 @@ def search_movie_on_tmdb(query):
     try:
         response = requests.get(search_url, params=params).json()
         if response.get("results"):
+            # Ищем первый результат, у которого есть постер
             best_result = next((movie for movie in response["results"] if movie.get("poster_path")), response["results"][0])
+            
             poster_path = best_result.get("poster_path")
             poster_url = f"{POSTER_BASE_URL}{poster_path}" if poster_path else None
             return {
@@ -90,7 +95,8 @@ def search_person_on_tmdb(query):
             return {
                 "name": person.get("name"),
                 "biography": details_response.get("biography"),
-                "profile_url": profile_url
+                "profile_url": profile_url,
+                "known_for_department": person.get("known_for_department")
             }
     except Exception:
         return None
