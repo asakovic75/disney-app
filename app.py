@@ -288,8 +288,6 @@ if dataframes:
                             display_field("Основная деятельность", internet_result.get('known_for'))
                             display_field("Дата рождения", internet_result.get('birthday'))
                             display_field("Место рождения", internet_result.get('place_of_birth'))
-                            display_field("Пол", genders.get(internet_result.get('gender')))
-                            display_field("Также известен(а) как", ", ".join(internet_result.get('also_known_as', [])))
                             
                             if internet_result['biography']:
                                 with st.expander("Биография"): st.write(internet_result['biography'])
@@ -299,3 +297,4 @@ if dataframes:
                         st.divider()
                 else:
                     st.error("В интернете также ничего не найдено.")
+
