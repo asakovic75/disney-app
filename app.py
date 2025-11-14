@@ -4,6 +4,8 @@ import requests
 import re
 
 # --- НАСТРОЙКА ---
+# API ключ будет безопасно браться из секретного хранилища Streamlit.
+# Если запускаете локально и секрета нет, подставьте ключ сюда для теста.
 TMDB_API_KEY = st.secrets.get("TMDB_API_KEY", "YOUR_TMDB_API_KEY_HERE") 
 tmdb_api_base_url = "https://api.themoviedb.org/3"
 
@@ -17,34 +19,35 @@ def load_data():
             "works": pd.read_csv("Произведения.csv"),
             "performers": pd.read_csv("Исполнители.csv"),
         }
+        # Приводим колонки с именами к строковому типу для надежного поиска
         data["works"]["Name"] = data["works"]["Name"].astype(str)
         data["performers"]["Name"] = data["performers"]["Name"].astype(str)
         return data
     except FileNotFoundError as e:
-        st.error(f"Ошибка: Не найден файл {e.filename}.")
+        st.error(f"Ошибка: Не найден файл {e.filename}. Убедитесь, что CSV файлы ('Произведения.csv', 'Исполнители.csv') находятся в той же папке.")
         return None
 
 def find_entity_by_name(query, dataframe):
-    """Универсальная функция поиска по названию."""
+    """Универсальная функция поиска по названию в DataFrame."""
     if dataframe is None or not query:
         return None
     result = dataframe[dataframe["Name"].str.contains(query, case=False, na=False)]
     return result if not result.empty else None
 
 def clean_notion_links(text):
-    """Очищает текст от ссылок Notion."""
+    """Очищает текст от ссылок Notion и возвращает список строк."""
     if not isinstance(text, str): return ["-"]
     cleaned_text = re.sub(r"\(https://www.notion.so/[^)]+\)", "", text)
     items = [item.strip().strip('"') for item in cleaned_text.split(',')]
     return items
 
 def display_field(label, value, extra=""):
-    """Отображает строку 'Метка: Значение', только если значение существует."""
+    """Отображает строку 'Метка: Значение', только если значение существует (не пустое, не NaN, не '-')"""
     if pd.notna(value) and str(value).strip() not in ['', '-']:
         st.write(f"**{label}:** {value}{extra}")
 
 def display_list(items_list, title):
-    """Отображает список в виде экспандера."""
+    """Красиво отображает список элементов под раскрывающимся заголовком."""
     with st.expander(title):
         if items_list and items_list != ['-']:
             for item in items_list: st.markdown(f"- {item.strip()}")
@@ -57,6 +60,7 @@ def get_movie_details(query, year=None):
     """Ищет фильм/мультфильм в TMDb и возвращает полную информацию."""
     if not TMDB_API_KEY or TMDB_API_KEY == "YOUR_TMDB_API_KEY_HERE": return None
     
+    # Умная обработка запроса: используем текст до двоеточия для поиска
     search_query = query.split(':')[0].strip() if ':' in query else query
 
     search_url = f"{tmdb_api_base_url}/search/movie"
@@ -138,7 +142,7 @@ if dataframes:
             if local_results is not None:
                 st.subheader("📊 Результаты из вашей базы данных")
                 for _, row in local_results.iterrows():
-                    displayed_titles.add(row['Name'])
+                    displayed_titles.add(row['Name'].strip())
                     year = int(row['Год выпуска']) if pd.notna(row['Год выпуска']) else None
                     details = get_movie_details(row["Name"], year=year)
                     
@@ -147,7 +151,7 @@ if dataframes:
                         if details and details['image_url']:
                             st.image(details['image_url'])
                     with col2:
-                        st.success(f"**{row['Name']}**")
+                        st.markdown(f"<div style='background-color:#28a745; padding: 10px; border-radius: 5px; color: white; margin-bottom: 10px;'><b>{row['Name']}</b></div>", unsafe_allow_html=True)
                         display_field("Год выпуска", year)
                         display_field("Тип", row.get('Тип'))
                         display_field("Жанр", row.get('Жанр'))
@@ -159,8 +163,7 @@ if dataframes:
                         display_field("Награды", row.get('Награды'))
 
                     if details and details['overview']:
-                        with st.expander("Сюжет"):
-                            st.write(details['overview'])
+                        with st.expander("Сюжет"): st.write(details['overview'])
 
                     display_list(clean_notion_links(row.get('Персонажи')), "Персонажи")
                     display_list(clean_notion_links(row.get('Исполнители')), "Исполнители")
@@ -173,7 +176,7 @@ if dataframes:
             internet_result = get_movie_details(query)
             
             if internet_result:
-                is_duplicate = any(title.startswith(internet_result['title'].split(':')[0]) for title in displayed_titles)
+                is_duplicate = any(internet_result['title'].strip() in title for title in displayed_titles)
                 if is_duplicate:
                     st.info("Наиболее релевантный результат из интернета уже показан выше из вашей базы данных.")
                 else:
@@ -181,7 +184,7 @@ if dataframes:
                     with col1:
                         if internet_result['image_url']: st.image(internet_result['image_url'])
                     with col2:
-                        st.info(f"**{internet_result['title']}**")
+                        st.markdown(f"<div style='background-color:#17a2b8; padding: 10px; border-radius: 5px; color: white; margin-bottom: 10px;'><b>{internet_result['title']}</b></div>", unsafe_allow_html=True)
                         display_field("Дата релиза", internet_result.get('release_date'))
                         display_field("Рейтинг зрителей", f"{internet_result.get('vote_average'):.1f} / 10" if internet_result.get('vote_average') else None)
                         with st.expander("Сюжет"):
@@ -203,7 +206,7 @@ if dataframes:
                     with col1:
                         if details and details['image_url']: st.image(details['image_url'])
                     with col2:
-                        st.success(f"**{row['Name']}**")
+                        st.markdown(f"<div style='background-color:#28a745; padding: 10px; border-radius: 5px; color: white; margin-bottom: 10px;'><b>{row['Name']}</b></div>", unsafe_allow_html=True)
                         display_field("Карьера", row.get('Карьера'))
                         display_field("Дата рождения", row.get('Дата рождения'))
                         display_field("Знак зодиака", row.get('Знак зодиака'))
@@ -228,7 +231,7 @@ if dataframes:
                     with col1:
                         if internet_result['image_url']: st.image(internet_result['image_url'])
                     with col2:
-                        st.info(f"**{internet_result['name']}**")
+                        st.markdown(f"<div style='background-color:#17a2b8; padding: 10px; border-radius: 5px; color: white; margin-bottom: 10px;'><b>{internet_result['name']}</b></div>", unsafe_allow_html=True)
                         display_field("Основная деятельность", internet_result.get('known_for'))
                         display_field("Дата рождения", internet_result.get('birthday'))
                         display_field("Место рождения", internet_result.get('place_of_birth'))
