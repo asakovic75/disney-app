@@ -17,12 +17,11 @@ def load_data():
             "works": pd.read_csv("Произведения.csv"),
             "performers": pd.read_csv("Исполнители.csv"),
         }
-        # Приводим колонки с именами к строковому типу для надежного поиска
         data["works"]["Name"] = data["works"]["Name"].astype(str)
         data["performers"]["Name"] = data["performers"]["Name"].astype(str)
         return data
     except FileNotFoundError as e:
-        st.error(f"Ошибка: Не найден файл {e.filename}. Убедитесь, что CSV файлы ('Произведения.csv', 'Исполнители.csv') находятся в той же папке.")
+        st.error(f"Ошибка: Не найден файл {e.filename}.")
         return None
 
 def find_entity_by_name(query, dataframe):
@@ -34,8 +33,7 @@ def find_entity_by_name(query, dataframe):
 
 def clean_notion_links(text):
     """Очищает текст от ссылок Notion."""
-    if not isinstance(text, str):
-        return ["-"]
+    if not isinstance(text, str): return ["-"]
     cleaned_text = re.sub(r"\(https://www.notion.so/[^)]+\)", "", text)
     items = [item.strip().strip('"') for item in cleaned_text.split(',')]
     return items
@@ -49,53 +47,73 @@ def display_list(items_list, title):
     """Отображает список в виде экспандера."""
     with st.expander(title):
         if items_list and items_list != ['-']:
-            for item in items_list:
-                st.markdown(f"- {item.strip()}")
+            for item in items_list: st.markdown(f"- {item.strip()}")
         else:
             st.write("Нет данных.")
 
 # --- ФУНКЦИИ ПОИСКА В TMDB ---
 
-def get_tmdb_supplement(query, entity_type="movie"):
-    """Получает из TMDb только постер/фото и описание/биографию."""
+def get_movie_details(query, year=None):
+    """Ищет фильм/мультфильм в TMDb и возвращает полную информацию."""
     if not TMDB_API_KEY or TMDB_API_KEY == "YOUR_TMDB_API_KEY_HERE":
-        return {"image_url": None, "details": "Ключ API для TMDb не настроен."}
+        return None
     
-    search_endpoint = "search/movie" if entity_type == "movie" else "search/person"
-    search_url = f"{tmdb_api_base_url}/{search_endpoint}"
+    search_url = f"{tmdb_api_base_url}/search/movie"
+    params = {"api_key": TMDB_API_KEY, "query": query, "language": "ru-RU"}
+    if year:
+        params['year'] = year
+    
+    try:
+        response = requests.get(search_url, params=params)
+        response.raise_for_status()
+        data = response.json()
+        if not data.get("results"): return None
+
+        movie = data["results"][0]
+        poster_path = movie.get("poster_path")
+        return {
+            "title": movie.get("title"),
+            "overview": movie.get("overview", "Сюжет не найден."),
+            "image_url": f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else None,
+            "release_date": movie.get("release_date"),
+            "vote_average": movie.get("vote_average")
+        }
+    except requests.exceptions.RequestException:
+        return None
+
+def get_person_details(query):
+    """Ищет человека в TMDb и возвращает расширенную информацию."""
+    if not TMDB_API_KEY or TMDB_API_KEY == "YOUR_TMDB_API_KEY_HERE": return None
+    
+    search_url = f"{tmdb_api_base_url}/search/person"
     params = {"api_key": TMDB_API_KEY, "query": query, "language": "ru-RU"}
     
     try:
         response = requests.get(search_url, params=params)
         response.raise_for_status()
         data = response.json()
+        if not data.get("results"): return None
 
-        if not data.get("results"):
-            return {"image_url": None, "details": "Не найдено в TMDb."}
+        person_id = data["results"][0].get("id")
+        if not person_id: return None
 
-        first_result = data["results"][0]
-        item_id = first_result.get("id")
-
-        if entity_type == "movie":
-            poster_path = first_result.get("poster_path")
-            image_url = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else None
-            details = first_result.get("overview", "Сюжет не найден.")
-        else: # person
-            profile_path = first_result.get("profile_path")
-            image_url = f"https://image.tmdb.org/t/p/w500{profile_path}" if profile_path else None
-            details = "Биография не найдена."
-            if item_id:
-                details_url = f"{tmdb_api_base_url}/person/{item_id}"
-                details_params = {"api_key": TMDB_API_KEY, "language": "ru-RU"}
-                details_response = requests.get(details_url, params=details_params)
-                details_response.raise_for_status()
-                details_data = details_response.json()
-                details = details_data.get("biography", details)
+        details_url = f"{tmdb_api_base_url}/person/{person_id}"
+        details_params = {"api_key": TMDB_API_KEY, "language": "ru-RU"}
+        details_response = requests.get(details_url, params=details_params)
+        details_response.raise_for_status()
+        details = details_response.json()
         
-        return {"image_url": image_url, "details": details}
-
+        profile_path = details.get("profile_path")
+        return {
+            "name": details.get("name"),
+            "biography": details.get("biography", "Биография не найдена."),
+            "image_url": f"https://image.tmdb.org/t/p/w500{profile_path}" if profile_path else None,
+            "birthday": details.get("birthday"),
+            "place_of_birth": details.get("place_of_birth"),
+            "known_for": details.get("known_for_department")
+        }
     except requests.exceptions.RequestException:
-        return {"image_url": None, "details": "Ошибка при запросе к TMDb."}
+        return None
 
 # --- ГЛАВНАЯ ЧАСТЬ ПРИЛОЖЕНИЯ ---
 
@@ -106,30 +124,31 @@ dataframes = load_data()
 
 if dataframes:
     st.sidebar.title("Навигация")
-    search_type = st.sidebar.radio("Выберите раздел для поиска:", ("Произведение", "Исполнитель"))
+    search_type = st.sidebar.radio("Выберите раздел:", ("Произведение", "Исполнитель"))
 
     if search_type == "Произведение":
         st.header("🎬 Поиск по произведениям")
         query = st.text_input("Введите название произведения:", "Король лев")
         if st.button("🔍 Найти", key="work_search"):
+            
+            # --- БЛОК 1: ПОИСК В ЛОКАЛЬНОЙ БАЗЕ ---
             local_results = find_entity_by_name(query, dataframes["works"])
-
             if local_results is not None:
                 st.subheader("📊 Результаты из вашей базы данных")
                 for _, row in local_results.iterrows():
-                    # Для каждого локального результата получаем постер и сюжет
-                    supplement = get_tmdb_supplement(row["Name"], entity_type="movie")
+                    year = int(row['Год выпуска']) if pd.notna(row['Год выпуска']) else None
+                    details = get_movie_details(row["Name"], year=year)
                     
                     col1, col2 = st.columns([1, 2.5])
                     with col1:
-                        if supplement['image_url']:
-                            st.image(supplement['image_url'])
-                    
+                        if details and details['image_url']:
+                            st.image(details['image_url'])
                     with col2:
                         st.success(f"**{row['Name']}**")
-                        display_field("Год выпуска", int(row.get('Год выпуска', 0)) if pd.notna(row.get('Год выпуска')) else None)
+                        display_field("Год выпуска", year)
                         display_field("Тип", row.get('Тип'))
                         display_field("Жанр", row.get('Жанр'))
+                        # ... все остальные поля из вашей таблицы
                         display_field("Рейтинг", row.get('Рейтинг'))
                         display_field("Возраст", row.get('Возраст'))
                         display_field("Продолжительность", row.get('Продолжительность'))
@@ -137,77 +156,79 @@ if dataframes:
                         display_field("Бюджет и сборы", row.get('Бюджет и сборы'))
                         display_field("Награды", row.get('Награды'))
 
-                    # Интегрируем сюжет без лишних заголовков
-                    with st.expander("Сюжет"):
-                        st.write(supplement['details'])
+                    if details and details['overview']:
+                        with st.expander("Сюжет"):
+                            st.write(details['overview'])
 
                     display_list(clean_notion_links(row.get('Персонажи')), "Персонажи")
                     display_list(clean_notion_links(row.get('Исполнители')), "Исполнители")
                     display_list(clean_notion_links(row.get('Песни')), "Песни")
                     st.divider()
             else:
-                st.warning("В вашей базе ничего не найдено. Выполняется поиск в интернете...")
-                # Если в локальной базе нет, ищем в интернете
-                tmdb_result = get_tmdb_supplement(query, entity_type="movie")
-                st.subheader("🌐 Найдено в интернете (TMDb)")
-                if tmdb_result and tmdb_result['image_url']:
-                    col1, col2 = st.columns([1, 2.5])
-                    with col1:
-                        st.image(tmdb_result['image_url'])
-                    with col2:
-                        st.info(f"**{query}**") # Используем исходный запрос как заголовок
-                        with st.expander("Сюжет"):
-                            st.write(tmdb_result['details'])
-                else:
-                    st.error("В интернете также ничего не найдено.")
+                st.warning("В вашей базе ничего не найдено.")
+
+            # --- БЛОК 2: ОТДЕЛЬНЫЙ ПОИСК В ИНТЕРНЕТЕ ---
+            st.subheader("🌐 Найдено в интернете (TMDb)")
+            internet_result = get_movie_details(query)
+            if internet_result:
+                col1, col2 = st.columns([1, 2.5])
+                with col1:
+                    if internet_result['image_url']: st.image(internet_result['image_url'])
+                with col2:
+                    st.info(f"**{internet_result['title']}**")
+                    display_field("Дата релиза", internet_result.get('release_date'))
+                    display_field("Рейтинг зрителей", f"{internet_result.get('vote_average'):.1f} / 10" if internet_result.get('vote_average') else None)
+                    with st.expander("Сюжет"):
+                        st.write(internet_result.get('overview'))
+            else:
+                st.error("По вашему запросу в интернете ничего не найдено.")
 
     elif search_type == "Исполнитель":
         st.header("👤 Поиск по исполнителям")
-        query = st.text_input("Введите имя исполнителя:", "Джонни Депп")
+        query = st.text_input("Введите имя исполнителя:", "Леонардо Ди Каприо")
         if st.button("🔍 Найти", key="performer_search"):
             local_results = find_entity_by_name(query, dataframes["performers"])
 
             if local_results is not None:
                 st.subheader("📊 Результаты из вашей базы данных")
                 for _, row in local_results.iterrows():
-                    # Для каждого локального результата получаем фото и биографию
-                    supplement = get_tmdb_supplement(row["Name"], entity_type="person")
-
+                    details = get_person_details(row["Name"])
                     col1, col2 = st.columns([1, 2.5])
                     with col1:
-                        if supplement['image_url']:
-                            st.image(supplement['image_url'])
-                            
+                        if details and details['image_url']: st.image(details['image_url'])
                     with col2:
                         st.success(f"**{row['Name']}**")
                         display_field("Карьера", row.get('Карьера'))
                         display_field("Дата рождения", row.get('Дата рождения'))
                         display_field("Знак зодиака", row.get('Знак зодиака'))
+                        # ... все остальные поля
                         display_field("Место рождения", row.get('Место рождения'))
                         display_field("Дата смерти", row.get('Дата смерти'))
                         display_field("Место смерти", row.get('Место смерти'))
                         display_field("Рост", row.get('Рост'), extra=" м")
                         display_field("Всего проектов", row.get('Всего проектов'))
                     
-                    # Интегрируем биографию
-                    with st.expander("Биография"):
-                        st.write(supplement['details'])
+                    if details and details['biography']:
+                        with st.expander("Биография"): st.write(details['biography'])
 
-                    display_list(clean_notion_links(row.get('Фильмография', '')), "Фильмография")
-                    display_list(clean_notion_links(row.get('Сыгранные/озвученные персонажи', '')), "Персонажи")
+                    display_list(clean_notion_links(row.get('Фильмография')), "Фильмография")
+                    display_list(clean_notion_links(row.get('Сыгранные/озвученные персонажи')), "Персонажи")
                     st.divider()
             else:
                 st.warning("В вашей базе ничего не найдено. Выполняется поиск в интернете...")
-                # Если в локальной базе нет, ищем в интернете
-                tmdb_result = get_tmdb_supplement(query, entity_type="person")
+                internet_result = get_person_details(query)
                 st.subheader("🌐 Найдено в интернете (TMDb)")
-                if tmdb_result and tmdb_result['image_url']:
+                if internet_result:
                     col1, col2 = st.columns([1, 2.5])
                     with col1:
-                        st.image(tmdb_result['image_url'])
+                        if internet_result['image_url']: st.image(internet_result['image_url'])
                     with col2:
-                        st.info(f"**{query}**")
-                        with st.expander("Биография"):
-                            st.write(tmdb_result['details'])
+                        st.info(f"**{internet_result['name']}**")
+                        display_field("Основная деятельность", internet_result.get('known_for'))
+                        display_field("Дата рождения", internet_result.get('birthday'))
+                        display_field("Место рождения", internet_result.get('place_of_birth'))
+                    
+                    if internet_result['biography']:
+                        with st.expander("Биография"): st.write(internet_result['biography'])
                 else:
                     st.error("В интернете также ничего не найдено.")
