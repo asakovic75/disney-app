@@ -6,8 +6,8 @@ import re
 # --- НАСТРОЙКА ---
 TMDB_API_KEY = st.secrets.get("TMDB_API_KEY", "YOUR_TMDB_API_KEY_HERE")
 tmdb_api_base_url = "https://api.themoviedb.org/3"
-POSTER_BASE_URL = "https://image.tmdb.org/t/p/w400" # URL для постеров
-PROFILE_BASE_URL = "https://image.tmdb.org/t/p/w400" # URL для фото актеров
+POSTER_BASE_URL = "https://image.tmdb.org/t/p/w400"
+PROFILE_BASE_URL = "https://image.tmdb.org/t/p/w400"
 
 # --- ФУНКЦИИ ЗАГРУЗКИ И ОЧИСТКИ ДАННЫХ ---
 
@@ -42,43 +42,48 @@ def display_list(items_list, title):
 def find_entity_by_name(query, dataframe, column_name="Name"):
     if dataframe is None or not query: return None
     result = dataframe[dataframe[column_name].str.contains(query, case=False, na=False)]
-    return result if not result.empty else None
+    return result.iloc[0] if not result.empty else None
 
-def search_movies_on_tmdb(query):
-    """Ищет ВСЕ фильмы, совпадающие с запросом, в TMDb."""
+def search_movie_on_tmdb(query):
     if not TMDB_API_KEY or TMDB_API_KEY == "YOUR_TMDB_API_KEY_HERE":
         st.warning("Ключ API для TMDb не настроен.")
-        return []
+        return None
+        
     search_url = f"{tmdb_api_base_url}/search/movie"
     params = {"api_key": TMDB_API_KEY, "query": query, "language": "ru-RU"}
     try:
-        response = requests.get(search_url, params=params)
-        response.raise_for_status()
-        return response.json().get("results", [])
+        response = requests.get(search_url, params=params).json()
+        if response.get("results"):
+            # Ищем первый результат, у которого есть постер
+            best_result = next((movie for movie in response["results"] if movie.get("poster_path")), response["results"][0])
+            
+            poster_path = best_result.get("poster_path")
+            poster_url = f"{POSTER_BASE_URL}{poster_path}" if poster_path else None
+            return {
+                "title": best_result.get("title"),
+                "overview": best_result.get("overview"),
+                "vote_average": best_result.get("vote_average"),
+                "poster_url": poster_url,
+                "release_date": best_result.get("release_date")
+            }
     except Exception as e:
         st.error(f"Ошибка при запросе к TMDb: {e}")
-    return []
-    
+    return None
+
 def search_person_on_tmdb(query):
-    """Ищет актера в TMDb."""
     if not TMDB_API_KEY or TMDB_API_KEY == "YOUR_TMDB_API_KEY_HERE":
         st.warning("Ключ API для TMDb не настроен.")
         return None
     search_url = f"{tmdb_api_base_url}/search/person"
     params = {"api_key": TMDB_API_KEY, "query": query, "language": "ru-RU"}
     try:
-        response = requests.get(search_url, params=params)
-        response.raise_for_status()
-        data = response.json()
-        if data.get("results"):
-            person = data["results"][0]
-            profile_path = person.get("profile_path")
-            profile_url = f"{PROFILE_BASE_URL}{profile_path}" if profile_path else None
-            
-            # Дополнительный запрос для получения биографии
+        response = requests.get(search_url, params=params).json()
+        if response.get("results"):
+            person = response["results"][0]
             person_details_url = f"{tmdb_api_base_url}/person/{person['id']}"
             details_response = requests.get(person_details_url, params={"api_key": TMDB_API_KEY, "language": "ru-RU"}).json()
-
+            profile_path = person.get("profile_path")
+            profile_url = f"{PROFILE_BASE_URL}{profile_path}" if profile_path else None
             return {
                 "name": person.get("name"),
                 "biography": details_response.get("biography"),
@@ -105,41 +110,40 @@ if dataframes:
 
     if search_type == "Произведение":
         st.header("🎬 Поиск по произведениям")
-        query = st.text_input("Введите название произведения:", "Звёздные войны")
-        
+        query = st.text_input("Введите название произведения:", "Пираты Карибского моря")
         if st.button("🔍 Найти", key="work_search"):
-            st.subheader("📊 Результаты из вашей базы данных")
-            local_results = find_entity_by_name(query, dataframes["works"])
+            col1, col2 = st.columns(2)
             
-            if local_results is not None:
-                for _, row in local_results.iterrows():
-                    st.success(f"**{row['Name']}** ({int(row.get('Год выпуска', 0))})")
-                    st.write(f"**Тип:** {row.get('Тип', '-')}")
-                    st.write(f"**Рейтинг:** {row.get('Рейтинг', '-')} | **Возраст:** {row.get('Возраст', '-')}")
-                    st.write(f"**Студия:** {clean_notion_links(row.get('Студия', ''))[0]}")
-                    st.divider()
-            else:
-                st.warning("В вашей локальной базе по этому запросу ничего не найдено.")
+            with col1:
+                st.subheader("📊 В вашей базе данных")
+                local_result = find_entity_by_name(query, dataframes["works"])
+                if local_result is not None:
+                    st.success(f"**{local_result['Name']}** ({int(local_result.get('Год выпуска', 0))})")
+                    st.write(f"**Тип:** {local_result.get('Тип', '-')}")
+                    st.write(f"**Рейтинг:** {local_result.get('Рейтинг', '-')} | **Возраст:** {local_result.get('Возраст', '-')}")
+                    st.write(f"**Жанр:** {local_result.get('Жанр', '-')}")
+                    st.write(f"**Студия:** {clean_notion_links(local_result.get('Студия', ''))[0]}")
+                    st.write(f"**Бюджет и сборы:** {local_result.get('Бюджет и сборы', '-')}")
+                    st.write(f"**Награды:** {local_result.get('Награды', '-')}")
+                    display_list(clean_notion_links(local_result.get('Персонажи')), "Персонажи")
+                    display_list(clean_notion_links(local_result.get('Исполнители')), "Исполнители")
+                    display_list(clean_notion_links(local_result.get('Песни')), "Песни")
+                else:
+                    st.warning("В вашей базе ничего не найдено.")
 
-            st.divider()
-            st.subheader("🌐 Результаты из интернета (TMDb)")
-            tmdb_results = search_movies_on_tmdb(query)
-
-            if tmdb_results:
-                for movie in tmdb_results:
-                    col1, col2 = st.columns([1, 4])
-                    with col1:
-                        if movie.get('poster_path'):
-                            st.image(f"{POSTER_BASE_URL}{movie.get('poster_path')}")
-                    with col2:
-                        st.info(f"**{movie.get('title')}**")
-                        st.write(f"**Дата выхода:** {movie.get('release_date', 'N/A')}")
-                        st.write(f"**Рейтинг зрителей:** {movie.get('vote_average', 'N/A')} / 10")
-                        st.caption(movie.get('overview', 'Нет описания.'))
-                    st.divider()
-            else:
-                st.info("В интернете ничего не найдено.")
-
+            with col2:
+                st.subheader("🌐 Найдено в интернете (TMDb)")
+                tmdb_result = search_movie_on_tmdb(query)
+                if tmdb_result:
+                    st.info(f"**{tmdb_result['title']}**")
+                    if tmdb_result['poster_url']:
+                        st.image(tmdb_result['poster_url'], width=200)
+                    st.write(f"**Дата выхода:** {tmdb_result.get('release_date', 'N/A')}")
+                    st.write(f"**Рейтинг зрителей:** {tmdb_result.get('vote_average', 'N/A')} / 10")
+                    st.caption("Описание:")
+                    st.write(tmdb_result.get('overview', 'Нет описания.'))
+                else:
+                    st.info("В интернете ничего не найдено.")
 
     elif search_type == "Исполнитель":
         st.header("👤 Поиск по исполнителям")
@@ -149,14 +153,12 @@ if dataframes:
             
             with col1:
                 st.subheader("📊 В вашей базе данных")
-                results = find_entity_by_name(query, dataframes["performers"])
-                if results is not None:
-                    for _, row in results.iterrows():
-                        st.success(f"**{row['Name']}**")
-                        st.write(f"**Карьера:** {row.get('Карьера', '-')}")
-                        st.write(f"**Дата рождения:** {row.get('Дата рождения', '-')}")
-                        display_list(clean_notion_links(row.get('Фильмография', '')), "Фильмография")
-                        st.divider()
+                local_result = find_entity_by_name(query, dataframes["performers"])
+                if local_result is not None:
+                    st.success(f"**{local_result['Name']}**")
+                    st.write(f"**Карьера:** {local_result.get('Карьера', '-')}")
+                    st.write(f"**Дата рождения:** {local_result.get('Дата рождения', '-')}")
+                    display_list(clean_notion_links(local_result.get('Фильмография', '')), "Фильмография")
                 else:
                     st.warning("В базе ничего не найдено.")
 
