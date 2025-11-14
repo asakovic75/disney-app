@@ -6,8 +6,8 @@ import re
 # --- НАСТРОЙКА ---
 TMDB_API_KEY = st.secrets.get("TMDB_API_KEY", "YOUR_TMDB_API_KEY_HERE")
 tmdb_api_base_url = "https://api.themoviedb.org/3"
-POSTER_BASE_URL = "https://image.tmdb.org/t/p/w400" # URL для постеров
-PROFILE_BASE_URL = "https://image.tmdb.org/t/p/w400" # URL для фото актеров
+POSTER_BASE_URL = "https://image.tmdb.org/t/p/w400"
+PROFILE_BASE_URL = "https://image.tmdb.org/t/p/w400"
 
 # --- ФУНКЦИИ ЗАГРУЗКИ И ОЧИСТКИ ДАННЫХ ---
 
@@ -26,11 +26,8 @@ def load_data():
 
 def clean_notion_links(text):
     """Очищает текст от ссылок Notion, лишних символов и возвращает список строк."""
-    if not isinstance(text, str):
-        return ["-"]
-    # Удаляем URL Notion
+    if not isinstance(text, str): return ["-"]
     cleaned_text = re.sub(r"\(https://www.notion.so/[^)]+\)", "", text)
-    # Разделяем по запятым и убираем лишние пробелы/кавычки у каждого элемента
     items = [item.strip().strip('"') for item in cleaned_text.split(',')]
     return items
 
