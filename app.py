@@ -4,7 +4,7 @@ import requests
 import re
 
 # --- НАСТРОЙКА ---
-TMDB_API_KEY = st.secrets.get("TMDB_API_KEY", "YOUR_TMDB_API_KEY_HERE") 
+TMDB_API_key = st.secrets.get("TMDB_API_key", "YOUR_TMDB_API_KEY_HERE") 
 tmdb_api_base_url = "https://api.themoviedb.org/3"
 
 # ID компаний Disney и ее дочерних студий для фильтрации
@@ -54,7 +54,7 @@ def display_field(label, value, extra=""):
         st.write(f"**{label}:** {value}{extra}")
 
 def display_list(items_list, title):
-    """Отображает список в виде экспандера."""
+    """Красиво отображает список элементов под раскрывающимся заголовком."""
     with st.expander(title):
         if items_list and items_list != ['-']:
             for item in items_list: st.markdown(f"- {item.strip()}")
@@ -65,11 +65,11 @@ def display_list(items_list, title):
 
 def get_movie_details(query, year=None):
     """Ищет фильмы TMDb, фильтрует по Disney и возвращает ПОДРОБНЫЙ список."""
-    if not TMDB_API_KEY or TMDB_API_KEY == "YOUR_TMDB_API_KEY_HERE": return []
+    if not TMDB_API_key or TMDB_API_key == "YOUR_TMDB_API_KEY_HERE": return []
     
     search_query = query.split(':')[0].strip() if ':' in query else query
     search_url = f"{tmdb_api_base_url}/search/movie"
-    params = {"api_key": TMDB_API_KEY, "query": search_query, "language": "ru-RU", "page": 1}
+    params = {"api_key": TMDB_API_key, "query": search_query, "language": "ru-RU", "page": 1}
     if year:
         params['primary_release_year'] = year
     
@@ -84,7 +84,7 @@ def get_movie_details(query, year=None):
             if not movie_id: continue
 
             details_url = f"{tmdb_api_base_url}/movie/{movie_id}"
-            details_params = {"api_key": TMDB_API_KEY, "language": "ru-RU"}
+            details_params = {"api_key": TMDB_API_key, "language": "ru-RU"}
             details_response = requests.get(details_url, params=details_params)
             movie_details = details_response.json()
             
@@ -113,10 +113,10 @@ def get_movie_details(query, year=None):
 
 def get_person_details(query):
     """Ищет людей в TMDb и возвращает ПОДРОБНЫЙ список."""
-    if not TMDB_API_KEY or TMDB_API_KEY == "YOUR_TMDB_API_KEY_HERE": return []
+    if not TMDB_API_key or TMDB_API_key == "YOUR_TMDB_API_KEY_HERE": return []
 
     search_url = f"{tmdb_api_base_url}/search/person"
-    params = {"api_key": TMDB_API_KEY, "query": query, "language": "ru-RU"}
+    params = {"api_key": TMDB_API_key, "query": query, "language": "ru-RU"}
     
     try:
         response = requests.get(search_url, params=params)
@@ -128,17 +128,24 @@ def get_person_details(query):
             person_id = person_summary.get("id")
             if not person_id: continue
 
-            # Получаем главные проекты из первоначального поиска
-            known_for_titles = [
-                f"{item.get('title', item.get('name'))} ({item.get('release_date', 'N/A').split('-')[0]})"
-                for item in person_summary.get('known_for', [])
-            ]
-
+            # Запрос полной информации об актере
             details_url = f"{tmdb_api_base_url}/person/{person_id}"
-            details_params = {"api_key": TMDB_API_KEY, "language": "ru-RU"}
+            details_params = {"api_key": TMDB_API_key, "language": "ru-RU"}
             details_response = requests.get(details_url, params=details_params)
-            details_response.raise_for_status()
             details = details_response.json()
+            
+            # Запрос фильмографии
+            credits_url = f"{tmdb_api_base_url}/person/{person_id}/movie_credits"
+            credits_params = {"api_key": TMDB_API_key, "language": "ru-RU"}
+            credits_response = requests.get(credits_url, params=credits_params)
+            credits = credits_response.json().get('cast', [])
+            
+            # Сортировка по популярности и выбор топ-7
+            sorted_credits = sorted(credits, key=lambda x: x.get('popularity', 0), reverse=True)
+            top_films = [
+                f"{film.get('title')} ({film.get('release_date', 'N/A').split('-')[0]})" 
+                for film in sorted_credits[:7]
+            ]
             
             profile_path = details.get("profile_path")
             results.append({
@@ -148,7 +155,9 @@ def get_person_details(query):
                 "birthday": details.get("birthday"),
                 "place_of_birth": details.get("place_of_birth"),
                 "known_for": details.get("known_for_department"),
-                "known_for_titles": ", ".join(known_for_titles)
+                "gender": details.get("gender"),
+                "also_known_as": details.get("also_known_as", []),
+                "filmography": top_films
             })
         return results
     except requests.exceptions.RequestException:
@@ -159,6 +168,7 @@ def get_person_details(query):
 st.set_page_config(page_title="Умный поиск по миру Disney", layout="wide")
 st.title("✨ Умный поиск по миру Disney")
 
+genders = {1: "Женский", 2: "Мужской"}
 dataframes = load_data()
 
 if dataframes:
@@ -231,8 +241,8 @@ if dataframes:
                         display_field("Жанр", internet_result.get('genres'))
                         display_field("Продолжительность", internet_result.get('runtime'), extra=" мин.")
                         display_field("Студия", internet_result.get('companies'))
-                        display_field("Бюджет", f"${internet_result.get('budget'):,}" if internet_result.get('budget') else None)
-                        display_field("Сборы", f"${internet_result.get('revenue'):,}" if internet_result.get('revenue') else None)
+                        display_field("Бюджет", f"${internet_result.get('budget'):,}" if internet_result.get('budget') > 0 else "Не указан")
+                        display_field("Сборы", f"${internet_result.get('revenue'):,}" if internet_result.get('revenue') > 0 else "Не указаны")
 
                     with st.expander("Сюжет"):
                         st.write(internet_result.get('overview'))
@@ -268,13 +278,12 @@ if dataframes:
                         display_field("Всего проектов", row.get('Всего проектов'))
                     
                     if details and details['biography']:
-                        with st.expander("Биография"): 
-                            st.markdown("💥 " + details['biography'])
-                            if details.get('known_for_titles'):
-                                st.markdown("---")
-                                st.markdown(f"🎬 **Главные проекты**: {details['known_for_titles']}")
+                        with st.expander("Биография"): st.write(details['biography'])
+                    
+                    if details and details.get('filmography'):
+                        display_list(details['filmography'], "Избранная фильмография (по популярности)")
 
-                    display_list(clean_notion_links(row.get('Фильмография')), "Фильмография")
+                    display_list(clean_notion_links(row.get('Фильмография')), "Фильмография (из вашей базы)")
                     display_list(clean_notion_links(row.get('Сыгранные/озвученные персонажи')), "Персонажи")
                     st.divider()
             else:
@@ -291,13 +300,14 @@ if dataframes:
                             display_field("Основная деятельность", internet_result.get('known_for'))
                             display_field("Дата рождения", internet_result.get('birthday'))
                             display_field("Место рождения", internet_result.get('place_of_birth'))
+                            display_field("Пол", genders.get(internet_result.get('gender')))
+                            display_field("Также известен(а) как", ", ".join(internet_result.get('also_known_as', [])))
                         
                         if internet_result['biography']:
-                            with st.expander("Биография"):
-                                st.markdown("💥 " + internet_result['biography'])
-                                if internet_result.get('known_for_titles'):
-                                    st.markdown("---")
-                                    st.markdown(f"🎬 **Главные проекты**: {internet_result['known_for_titles']}")
+                            with st.expander("Биография"): st.write(internet_result['biography'])
+
+                        if internet_result.get('filmography'):
+                            display_list(internet_result['filmography'], "Избранная фильмография (по популярности)")
                         st.divider()
                 else:
                     st.error("В интернете также ничего не найдено.")
