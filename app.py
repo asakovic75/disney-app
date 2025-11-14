@@ -4,40 +4,32 @@ import requests
 import re
 
 # --- НАСТРОЙКА ---
-# API ключ будет безопасно браться из секретного хранилища Streamlit.
 TMDB_API_KEY = st.secrets.get("TMDB_API_KEY", "YOUR_TMDB_API_KEY_HERE")
 tmdb_api_base_url = "https://api.themoviedb.org/3"
-
+POSTER_BASE_URL = "https://image.tmdb.org/t/p/w400" # URL для постеров
+PROFILE_BASE_URL = "https://image.tmdb.org/t/p/w400" # URL для фото актеров
 
 # --- ФУНКЦИИ ЗАГРУЗКИ И ОЧИСТКИ ДАННЫХ ---
 
 @st.cache_data
 def load_data():
-    """Загружает CSV файлы (Произведения, Анонсы, Исполнители) и кэширует их."""
     try:
         data = {
             "works": pd.read_csv("Произведения.csv"),
-            "announcements": pd.read_csv("Анонсы.csv"),
             "performers": pd.read_csv("Исполнители.csv"),
         }
         return data
     except FileNotFoundError as e:
-        st.error(
-            f"Ошибка: Не найден файл {e.filename}. Убедитесь, что CSV файлы ('Произведения.csv', 'Анонсы.csv', 'Исполнители.csv') находятся в той же папке, что и app.py.")
+        st.error(f"Ошибка: Не найден файл {e.filename}.")
         return None
 
-
 def clean_notion_links(text):
-    """Очищает текст от ссылок Notion, лишних символов и возвращает список строк."""
-    if not isinstance(text, str):
-        return ["-"]
+    if not isinstance(text, str): return ["-"]
     cleaned_text = re.sub(r"\(https://www.notion.so/[^)]+\)", "", text)
     items = [item.strip().strip('"') for item in cleaned_text.split(',')]
     return items
 
-
 def display_list(items_list, title):
-    """Красиво отображает список элементов под раскрывающимся заголовком."""
     with st.expander(title):
         if items_list and items_list != ['-']:
             for item in items_list:
@@ -45,44 +37,57 @@ def display_list(items_list, title):
         else:
             st.write("-")
 
-
 # --- ФУНКЦИИ ПОИСКА ---
 
 def find_entity_by_name(query, dataframe, column_name="Name"):
-    """Универсальная функция поиска по названию в любом DataFrame."""
-    if dataframe is None or not query:
-        return None
+    if dataframe is None or not query: return None
     result = dataframe[dataframe[column_name].str.contains(query, case=False, na=False)]
     return result if not result.empty else None
 
-
-def search_on_tmdb(query):
-    """Ищет фильм в интернете (TMDb)."""
+def search_movies_on_tmdb(query):
+    """Ищет ВСЕ фильмы, совпадающие с запросом, в TMDb."""
     if not TMDB_API_KEY or TMDB_API_KEY == "YOUR_TMDB_API_KEY_HERE":
-        st.warning("Ключ API для TMDb не настроен. Поиск в интернете недоступен.")
-        return None
-
+        st.warning("Ключ API для TMDb не настроен.")
+        return []
     search_url = f"{tmdb_api_base_url}/search/movie"
+    params = {"api_key": TMDB_API_KEY, "query": query, "language": "ru-RU"}
+    try:
+        response = requests.get(search_url, params=params)
+        response.raise_for_status()
+        return response.json().get("results", [])
+    except Exception as e:
+        st.error(f"Ошибка при запросе к TMDb: {e}")
+    return []
+    
+def search_person_on_tmdb(query):
+    """Ищет актера в TMDb."""
+    if not TMDB_API_KEY or TMDB_API_KEY == "YOUR_TMDB_API_KEY_HERE":
+        st.warning("Ключ API для TMDb не настроен.")
+        return None
+    search_url = f"{tmdb_api_base_url}/search/person"
     params = {"api_key": TMDB_API_KEY, "query": query, "language": "ru-RU"}
     try:
         response = requests.get(search_url, params=params)
         response.raise_for_status()
         data = response.json()
         if data.get("results"):
-            movie = data["results"][0]
-            poster_path = movie.get("poster_path")
-            poster_url = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else None
+            person = data["results"][0]
+            profile_path = person.get("profile_path")
+            profile_url = f"{PROFILE_BASE_URL}{profile_path}" if profile_path else None
+            
+            # Дополнительный запрос для получения биографии
+            person_details_url = f"{tmdb_api_base_url}/person/{person['id']}"
+            details_response = requests.get(person_details_url, params={"api_key": TMDB_API_KEY, "language": "ru-RU"}).json()
+
             return {
-                "title": movie.get("title"),
-                "overview": movie.get("overview"),
-                "vote_average": movie.get("vote_average"),
-                "poster_url": poster_url,
-                "release_date": movie.get("release_date")
+                "name": person.get("name"),
+                "biography": details_response.get("biography"),
+                "profile_url": profile_url,
+                "known_for_department": person.get("known_for_department")
             }
     except Exception as e:
-        st.error(f"Ошибка при запросе к TMDb: {e}")
+        st.error(f"Ошибка при поиске исполнителя в TMDb: {e}")
     return None
-
 
 # --- ГЛАВНАЯ ЧАСТЬ ПРИЛОЖЕНИЯ ---
 
@@ -95,83 +100,75 @@ if dataframes:
     st.sidebar.title("Навигация")
     search_type = st.sidebar.radio(
         "Выберите раздел для поиска:",
-        ("Произведение", "Анонс", "Исполнитель")
+        ("Произведение", "Исполнитель")
     )
 
     if search_type == "Произведение":
         st.header("🎬 Поиск по произведениям")
-        query = st.text_input("Введите название произведения:", "Король лев")
+        query = st.text_input("Введите название произведения:", "Звёздные войны")
+        
         if st.button("🔍 Найти", key="work_search"):
-            col1, col2 = st.columns(2)
-            with col1:
-                st.subheader("📊 В вашей базе данных")
-                results = find_entity_by_name(query, dataframes["works"])
-                if results is not None:
-                    for _, row in results.iterrows():
-                        st.success(f"**{row['Name']}** ({int(row.get('Год выпуска', 0))})")
-                        st.write(f"**Тип:** {row.get('Тип', '-')}")
-                        st.write(f"**Рейтинг:** {row.get('Рейтинг', '-')} | **Возраст:** {row.get('Возраст', '-')}")
-                        st.write(f"**Жанр:** {row.get('Жанр', '-')}")
-                        st.write(f"**Студия:** {clean_notion_links(row.get('Студия', ''))[0]}")
-                        st.write(f"**Бюджет и сборы:** {row.get('Бюджет и сборы', '-')}")
-                        st.write(f"**Награды:** {row.get('Награды', '-')}")
-                        display_list(clean_notion_links(row.get('Персонажи')), "Персонажи")
-                        display_list(clean_notion_links(row.get('Исполнители')), "Исполнители")
-                        display_list(clean_notion_links(row.get('Песни')), "Песни")
-                        st.divider()
-                else:
-                    st.warning("В вашей базе ничего не найдено.")
-
-            with col2:
-                st.subheader("🌐 Найдено в интернете (TMDb)")
-                tmdb_result = search_on_tmdb(query)
-                if tmdb_result:
-                    st.info(f"**{tmdb_result['title']}**")
-                    if tmdb_result['poster_url']:
-                        st.image(tmdb_result['poster_url'], width=200)
-                    st.write(f"**Дата выхода:** {tmdb_result.get('release_date', 'N/A')}")
-                    st.write(f"**Рейтинг зрителей:** {tmdb_result.get('vote_average', 'N/A')} / 10")
-                    st.caption("Описание:")
-                    st.write(tmdb_result.get('overview', 'Нет описания.'))
-                else:
-                    st.info("В интернете ничего не найдено.")
-
-    elif search_type == "Анонс":
-        st.header("🗓️ Поиск по анонсам")
-        query = st.text_input("Введите название анонсированного проекта:", "Зверополис 2")
-        if st.button("🔍 Найти", key="announcement_search"):
-            results = find_entity_by_name(query, dataframes["announcements"])
-            if results is not None:
-                for _, row in results.iterrows():
-                    st.success(f"**{row['Name']}**")
-                    st.write(f"**Официальное название:** {row.get('Официальное название', '-')}")
-                    st.write(f"**Статус:** {row.get('Статус производства', '-')}")
-                    st.write(f"**Планируемая дата:** {row.get('Планируемая дата выхода', '-')}")
-                    st.write(f"**Студия:** {clean_notion_links(row.get('Студия-производитель', ''))[0]}")
-                    st.write(f"**Тематика:** {row.get('Тематика', '-')}")
+            st.subheader("📊 Результаты из вашей базы данных")
+            local_results = find_entity_by_name(query, dataframes["works"])
+            
+            if local_results is not None:
+                for _, row in local_results.iterrows():
+                    st.success(f"**{row['Name']}** ({int(row.get('Год выпуска', 0))})")
                     st.write(f"**Тип:** {row.get('Тип', '-')}")
-                    st.write(f"**Целевая аудитория:** {row.get('Целевая аудитория', '-')}")
+                    st.write(f"**Рейтинг:** {row.get('Рейтинг', '-')} | **Возраст:** {row.get('Возраст', '-')}")
+                    st.write(f"**Студия:** {clean_notion_links(row.get('Студия', ''))[0]}")
                     st.divider()
             else:
-                st.warning("В базе ничего не найдено.")
+                st.warning("В вашей локальной базе по этому запросу ничего не найдено.")
+
+            st.divider()
+            st.subheader("🌐 Результаты из интернета (TMDb)")
+            tmdb_results = search_movies_on_tmdb(query)
+
+            if tmdb_results:
+                for movie in tmdb_results:
+                    col1, col2 = st.columns([1, 4])
+                    with col1:
+                        if movie.get('poster_path'):
+                            st.image(f"{POSTER_BASE_URL}{movie.get('poster_path')}")
+                    with col2:
+                        st.info(f"**{movie.get('title')}**")
+                        st.write(f"**Дата выхода:** {movie.get('release_date', 'N/A')}")
+                        st.write(f"**Рейтинг зрителей:** {movie.get('vote_average', 'N/A')} / 10")
+                        st.caption(movie.get('overview', 'Нет описания.'))
+                    st.divider()
+            else:
+                st.info("В интернете ничего не найдено.")
+
 
     elif search_type == "Исполнитель":
         st.header("👤 Поиск по исполнителям")
         query = st.text_input("Введите имя исполнителя:", "Том Хэнкс")
         if st.button("🔍 Найти", key="performer_search"):
-            results = find_entity_by_name(query, dataframes["performers"])
-            if results is not None:
-                for _, row in results.iterrows():
-                    st.success(f"**{row['Name']}**")
-                    st.write(f"**Карьера:** {row.get('Карьера', '-')}")
-                    st.write(
-                        f"**Дата рождения:** {row.get('Дата рождения', '-')} | **Дата смерти:** {row.get('Дата смерти', 'Неизвестно')}")
-                    st.write(f"**Место рождения:** {row.get('Место рождения', '-')}")
-                    st.write(f"**Всего проектов:** {row.get('Всего проектов', '-')}")
-                    st.write(f"**Рост:** {row.get('Рост', '-')} м")
-                    display_list(clean_notion_links(row.get('Фильмография', '')), "Фильмография")
-                    display_list(clean_notion_links(row.get('Сыгранные/озвученные персонажи', '')),
-                                 "Сыгранные/озвученные персонажи")
-                    st.divider()
-            else:
-                st.warning("В базе ничего не найдено.")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("📊 В вашей базе данных")
+                results = find_entity_by_name(query, dataframes["performers"])
+                if results is not None:
+                    for _, row in results.iterrows():
+                        st.success(f"**{row['Name']}**")
+                        st.write(f"**Карьера:** {row.get('Карьера', '-')}")
+                        st.write(f"**Дата рождения:** {row.get('Дата рождения', '-')}")
+                        display_list(clean_notion_links(row.get('Фильмография', '')), "Фильмография")
+                        st.divider()
+                else:
+                    st.warning("В базе ничего не найдено.")
+
+            with col2:
+                st.subheader("🌐 Найдено в интернете (TMDb)")
+                person_result = search_person_on_tmdb(query)
+                if person_result:
+                    st.info(f"**{person_result['name']}**")
+                    if person_result['profile_url']:
+                        st.image(person_result['profile_url'], width=200)
+                    st.write(f"**Основная деятельность:** {person_result.get('known_for_department', 'N/A')}")
+                    with st.expander("Показать биографию"):
+                        st.write(person_result.get('biography', 'Биография отсутствует.'))
+                else:
+                    st.info("В интернете ничего не найдено.")
