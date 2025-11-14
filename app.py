@@ -24,6 +24,15 @@ def load_data():
         st.error(f"Ошибка: Не найден файл {e.filename}. Убедитесь, что CSV файлы ('Произведения.csv', 'Исполнители.csv') находятся в той же папке, что и app.py.")
         return None
 
+# !!! ВОТ ИСПРАВЛЕНИЕ: ВОЗВРАЩЕНА НЕДОСТАЮЩАЯ ФУНКЦИЯ !!!
+def find_entity_by_name(query, dataframe, column_name="Name"):
+    """Универсальная функция поиска по названию в любом DataFrame."""
+    if dataframe is None or not query:
+        return None
+    # .astype(str) делает поиск более надежным, даже если в колонке есть не-текстовые данные
+    result = dataframe[dataframe[column_name].astype(str).str.contains(query, case=False, na=False)]
+    return result if not result.empty else None
+
 def clean_notion_links(text):
     """Очищает текст от ссылок Notion, лишних символов и возвращает список строк."""
     if not isinstance(text, str):
@@ -34,7 +43,6 @@ def clean_notion_links(text):
 
 def display_field(label, value):
     """Отображает строку 'Метка: Значение', только если значение существует (не пустое, не NaN, не '-')"""
-    # pd.notna проверяет на NaN. Остальные условия - для пустых строк и дефисов-заглушек.
     if pd.notna(value) and str(value).strip() not in ['', '-']:
         st.write(f"**{label}:** {value}")
 
@@ -91,7 +99,6 @@ def search_person_on_tmdb(query):
             person_id = person.get("id")
             if not person_id: return None
 
-            # Второй запрос для получения полной биографии
             details_url = f"{tmdb_api_base_url}/person/{person_id}"
             details_params = {"api_key": TMDB_API_KEY, "language": "ru-RU"}
             details_response = requests.get(details_url, params=details_params)
@@ -144,7 +151,6 @@ if dataframes:
                     
                     with col2:
                         st.success(f"**{row['Name']}**")
-                        # Динамически отображаем только заполненные поля
                         display_field("Год выпуска", int(row.get('Год выпуска', 0)) if pd.notna(row.get('Год выпуска')) else None)
                         display_field("Тип", row.get('Тип'))
                         display_field("Жанр", row.get('Жанр'))
@@ -187,7 +193,6 @@ if dataframes:
                             
                     with col2:
                         st.success(f"**{row['Name']}**")
-                        # Динамически отображаем только заполненные поля
                         display_field("Карьера", row.get('Карьера'))
                         display_field("Дата рождения", row.get('Дата рождения'))
                         display_field("Знак зодиака", row.get('Знак зодиака'))
