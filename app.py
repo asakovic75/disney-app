@@ -55,13 +55,14 @@ def display_list(items_list, title):
 
 def get_movie_details(query, year=None):
     """Ищет фильм/мультфильм в TMDb и возвращает полную информацию."""
-    if not TMDB_API_KEY or TMDB_API_KEY == "YOUR_TMDB_API_KEY_HERE":
-        return None
+    if not TMDB_API_KEY or TMDB_API_KEY == "YOUR_TMDB_API_KEY_HERE": return None
     
+    search_query = query.split(':')[0].strip() if ':' in query else query
+
     search_url = f"{tmdb_api_base_url}/search/movie"
-    params = {"api_key": TMDB_API_KEY, "query": query, "language": "ru-RU"}
+    params = {"api_key": TMDB_API_KEY, "query": search_query, "language": "ru-RU"}
     if year:
-        params['year'] = year
+        params['primary_release_year'] = year
     
     try:
         response = requests.get(search_url, params=params)
@@ -117,8 +118,8 @@ def get_person_details(query):
 
 # --- ГЛАВНАЯ ЧАСТЬ ПРИЛОЖЕНИЯ ---
 
-st.set_page_config(page_title="Энциклопедия Disney", layout="wide")
-st.title("🏰 Энциклопедия Disney")
+st.set_page_config(page_title="Умный поиск по миру Disney", layout="wide")
+st.title("✨ Умный поиск по миру Disney")
 
 dataframes = load_data()
 
@@ -128,14 +129,16 @@ if dataframes:
 
     if search_type == "Произведение":
         st.header("🎬 Поиск по произведениям")
-        query = st.text_input("Введите название произведения:", "Король лев")
+        query = st.text_input("Введите название произведения:", "Король Лев")
         if st.button("🔍 Найти", key="work_search"):
             
-            # --- БЛОК 1: ПОИСК В ЛОКАЛЬНОЙ БАЗЕ ---
+            displayed_titles = set()
             local_results = find_entity_by_name(query, dataframes["works"])
+            
             if local_results is not None:
                 st.subheader("📊 Результаты из вашей базы данных")
                 for _, row in local_results.iterrows():
+                    displayed_titles.add(row['Name'])
                     year = int(row['Год выпуска']) if pd.notna(row['Год выпуска']) else None
                     details = get_movie_details(row["Name"], year=year)
                     
@@ -148,7 +151,6 @@ if dataframes:
                         display_field("Год выпуска", year)
                         display_field("Тип", row.get('Тип'))
                         display_field("Жанр", row.get('Жанр'))
-                        # ... все остальные поля из вашей таблицы
                         display_field("Рейтинг", row.get('Рейтинг'))
                         display_field("Возраст", row.get('Возраст'))
                         display_field("Продолжительность", row.get('Продолжительность'))
@@ -167,25 +169,29 @@ if dataframes:
             else:
                 st.warning("В вашей базе ничего не найдено.")
 
-            # --- БЛОК 2: ОТДЕЛЬНЫЙ ПОИСК В ИНТЕРНЕТЕ ---
             st.subheader("🌐 Найдено в интернете (TMDb)")
             internet_result = get_movie_details(query)
+            
             if internet_result:
-                col1, col2 = st.columns([1, 2.5])
-                with col1:
-                    if internet_result['image_url']: st.image(internet_result['image_url'])
-                with col2:
-                    st.info(f"**{internet_result['title']}**")
-                    display_field("Дата релиза", internet_result.get('release_date'))
-                    display_field("Рейтинг зрителей", f"{internet_result.get('vote_average'):.1f} / 10" if internet_result.get('vote_average') else None)
-                    with st.expander("Сюжет"):
-                        st.write(internet_result.get('overview'))
+                is_duplicate = any(title.startswith(internet_result['title'].split(':')[0]) for title in displayed_titles)
+                if is_duplicate:
+                    st.info("Наиболее релевантный результат из интернета уже показан выше из вашей базы данных.")
+                else:
+                    col1, col2 = st.columns([1, 2.5])
+                    with col1:
+                        if internet_result['image_url']: st.image(internet_result['image_url'])
+                    with col2:
+                        st.info(f"**{internet_result['title']}**")
+                        display_field("Дата релиза", internet_result.get('release_date'))
+                        display_field("Рейтинг зрителей", f"{internet_result.get('vote_average'):.1f} / 10" if internet_result.get('vote_average') else None)
+                        with st.expander("Сюжет"):
+                            st.write(internet_result.get('overview'))
             else:
                 st.error("По вашему запросу в интернете ничего не найдено.")
 
     elif search_type == "Исполнитель":
         st.header("👤 Поиск по исполнителям")
-        query = st.text_input("Введите имя исполнителя:", "Леонардо Ди Каприо")
+        query = st.text_input("Введите имя исполнителя:", "Джонни Депп")
         if st.button("🔍 Найти", key="performer_search"):
             local_results = find_entity_by_name(query, dataframes["performers"])
 
@@ -201,7 +207,6 @@ if dataframes:
                         display_field("Карьера", row.get('Карьера'))
                         display_field("Дата рождения", row.get('Дата рождения'))
                         display_field("Знак зодиака", row.get('Знак зодиака'))
-                        # ... все остальные поля
                         display_field("Место рождения", row.get('Место рождения'))
                         display_field("Дата смерти", row.get('Дата смерти'))
                         display_field("Место смерти", row.get('Место смерти'))
@@ -217,8 +222,8 @@ if dataframes:
             else:
                 st.warning("В вашей базе ничего не найдено. Выполняется поиск в интернете...")
                 internet_result = get_person_details(query)
-                st.subheader("🌐 Найдено в интернете (TMDb)")
                 if internet_result:
+                    st.subheader("🌐 Найдено в интернете (TMDb)")
                     col1, col2 = st.columns([1, 2.5])
                     with col1:
                         if internet_result['image_url']: st.image(internet_result['image_url'])
