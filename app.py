@@ -1,4 +1,3 @@
-# --- БЛОК 1: ИМПОРТ БИБЛИОТЕК ---
 import streamlit as st
 import pandas as pd
 import requests
@@ -7,16 +6,12 @@ import base64
 from io import BytesIO
 import datetime
 
-# --- БЛОК 2: НАСТРОЙКА И КОНСТАНТЫ ---
 TMDB_API_KEY = st.secrets.get("TMDB_API_KEY", "YOUR_TMDB_API_KEY_HERE")
 tmdb_api_base_url = "https://api.themoviedb.org/3"
 DISNEY_COMPANY_IDS_STR = "2|3|6125|420|1|10282|127928"
 
-# --- БЛОК 3: ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
-
 @st.cache_data
 def get_image_as_base64(url):
-    """Загружает изображение и кодирует его в Base64."""
     if not url or not url.startswith("http"):
         return None
     try:
@@ -29,7 +24,6 @@ def get_image_as_base64(url):
 
 @st.cache_data
 def load_data():
-    """Загружает и кэширует данные из локальных CSV-файлов."""
     try:
         data = { "works": pd.read_csv("Произведения.csv"), "performers": pd.read_csv("Исполнители.csv") }
         data["works"]["Name"] = data["works"]["Name"].astype(str)
@@ -61,10 +55,7 @@ def display_list(items_list, title):
         else:
             st.write("Нет данных.")
 
-# --- БЛОК 4: ФУНКЦИИ ДЛЯ РАБОТЫ С TMDB API ---
-
 def get_movie_details(query, year=None):
-    """Ищет фильмы, фильтрует по Disney и возвращает детальную информацию, ВКЛЮЧАЯ ID ФИЛЬМА."""
     if not TMDB_API_KEY or TMDB_API_KEY == "YOUR_TMDB_API_KEY_HERE": return []
     search_query = query.split(':')[0].strip() if ':' in query else query
     discover_url = f"{tmdb_api_base_url}/discover/movie"
@@ -85,10 +76,8 @@ def get_movie_details(query, year=None):
             poster_path = movie_details.get("poster_path")
             genres = [genre['name'] for genre in movie_details.get('genres', [])]
             companies = [comp['name'] for comp in movie_details.get('production_companies', [])]
-            # --- ИЗМЕНЕНИЕ: Добавляем 'id' в возвращаемый словарь ---
             disney_movies.append({
-                "id": movie_id,
-                "title": movie_details.get("title"), "overview": movie_details.get("overview", "Сюжет не найден."),
+                "id": movie_id, "title": movie_details.get("title"), "overview": movie_details.get("overview", "Сюжет не найден."),
                 "image_url": f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else None,
                 "release_date": movie_details.get("release_date"), "vote_average": movie_details.get("vote_average"),
                 "runtime": movie_details.get("runtime"), "genres": ", ".join(genres),
@@ -99,7 +88,6 @@ def get_movie_details(query, year=None):
         return []
 
 def get_person_details(query):
-    """Ищет персон в TMDB (без изменений)."""
     if not TMDB_API_KEY or TMDB_API_KEY == "YOUR_TMDB_API_KEY_HERE": return []
     search_url = f"{tmdb_api_base_url}/search/person"
     params = {"api_key": TMDB_API_KEY, "query": query, "language": "ru-RU"}
@@ -132,11 +120,9 @@ def get_person_details(query):
 
 @st.cache_data
 def get_movie_reviews(movie_id):
-    """Получает до 3 страниц отзывов для фильма по его ID."""
     if not movie_id: return []
     all_reviews = []
-    # --- ИЗМЕНЕНИЕ: Цикл для загрузки нескольких страниц ---
-    for page in range(1, 4): # Загружаем страницы 1, 2, 3
+    for page in range(1, 4):
         reviews_url = f"{tmdb_api_base_url}/movie/{movie_id}/reviews"
         params = {"api_key": TMDB_API_KEY, "page": page}
         try:
@@ -144,18 +130,26 @@ def get_movie_reviews(movie_id):
             response.raise_for_status()
             data = response.json()
             reviews = data.get("results", [])
-            if not reviews: # Если на странице нет отзывов, прекращаем
+            if not reviews:
                 break
             all_reviews.extend(reviews)
         except requests.exceptions.RequestException:
-            break # В случае ошибки прекращаем
+            break
     return all_reviews
 
 
-# --- БЛОК 5: ГЛАВНАЯ ЧАСТЬ ПРИЛОЖЕНИЯ (ИНТЕРФЕЙС) ---
-
 st.set_page_config(page_title="Умный поиск по миру Disney", layout="wide")
 st.title("✨ Умный поиск по миру Disney")
+
+if 'work_query' not in st.session_state:
+    st.session_state.work_query = ""
+    st.session_state.local_work_results = None
+    st.session_state.internet_work_results = None
+
+if 'performer_query' not in st.session_state:
+    st.session_state.performer_query = ""
+    st.session_state.local_performer_results = None
+    st.session_state.internet_performer_results = None
 
 dataframes = load_data()
 
@@ -163,15 +157,19 @@ if dataframes:
     st.sidebar.title("Навигация")
     search_type = st.sidebar.radio("Выберите раздел:", ("Произведение", "Исполнитель"))
 
-    # --- ВКЛАДКА "ПРОИЗВЕДЕНИЕ" ---
     if search_type == "Произведение":
         st.header("🎬 Поиск по произведениям")
         query = st.text_input("Введите название произведения:", "Красавица и чудовище")
         if st.button("🔍 Найти", key="work_search"):
-            displayed_items, local_results = set(), find_entity_by_name(query, dataframes["works"])
-            if local_results is not None:
+            st.session_state.work_query = query
+            st.session_state.local_work_results = find_entity_by_name(query, dataframes["works"])
+            st.session_state.internet_work_results = get_movie_details(query)
+
+        if st.session_state.work_query:
+            displayed_items = set()
+            if st.session_state.local_work_results is not None:
                 st.subheader("📊 Результаты из вашей базы данных")
-                for index, row in local_results.iterrows():
+                for index, row in st.session_state.local_work_results.iterrows():
                     year = int(row['Год выпуска']) if pd.notna(row['Год выпуска']) else 0
                     title_cleaned = row['Name'].split(':')[0].strip().lower()
                     displayed_items.add((title_cleaned, year))
@@ -191,7 +189,6 @@ if dataframes:
                     display_list(clean_notion_links(row.get('Персонажи')), "Персонажи"); display_list(clean_notion_links(row.get('Исполнители')), "Исполнители")
                     display_list(clean_notion_links(row.get('Песни')), "Песни")
 
-                    # Блок для отображения отзывов для локальных результатов
                     if details:
                         movie_id = details['id']
                         if st.button("Показать отзывы", key=f"review_local_{index}"):
@@ -211,12 +208,12 @@ if dataframes:
                                     st.info("Для этого фильма не найдено отзывов.")
                     st.divider()
             else:
-                st.warning("В вашей базе ничего не найдено.")
+                st.warning(f"В вашей базе ничего не найдено по запросу: '{st.session_state.work_query}'")
             
             st.subheader("🌐 Найдено в интернете (TMDb)")
-            internet_results, new_results_found = get_movie_details(query), False
-            if internet_results:
-                for res in internet_results:
+            new_results_found = False
+            if st.session_state.internet_work_results:
+                for res in st.session_state.internet_work_results:
                     rel_date = res.get('release_date')
                     internet_year = int(rel_date.split('-')[0]) if rel_date and '-' in rel_date else 0
                     check_tuple = (res['title'].split(':')[0].strip().lower(), internet_year)
@@ -233,7 +230,6 @@ if dataframes:
                         display_field("Сборы", f"${res.get('revenue'):,}" if res.get('revenue', 0) > 0 else "Не указаны")
                     with st.expander("Сюжет"): st.write(res.get('overview'))
                     
-                    # Блок для отображения отзывов для интернет-результатов
                     movie_id = res['id']
                     if st.button("Показать отзывы", key=f"review_inet_{movie_id}"):
                         with st.spinner("Загрузка отзывов..."):
@@ -251,17 +247,25 @@ if dataframes:
                             else:
                                 st.info("Для этого фильма не найдено отзывов.")
                     st.divider()
-            if not new_results_found: st.info("Все релевантные Disney-фильмы из интернета уже показаны в вашей базе данных или не найдены.")
+            if not new_results_found: 
+                st.info("Все релевантные Disney-фильмы из интернета уже показаны в вашей базе данных или не найдены.")
 
-    # --- ВКЛАДКА "ИСПОЛНИТЕЛЬ" ---
     elif search_type == "Исполнитель":
         st.header("👤 Поиск по исполнителям")
         query = st.text_input("Введите имя исполнителя:", "Джонни Депп")
         if st.button("🔍 Найти", key="performer_search"):
+            st.session_state.performer_query = query
             local_results = find_entity_by_name(query, dataframes["performers"])
-            if local_results is not None:
+            st.session_state.local_performer_results = local_results
+            if local_results is None:
+                st.session_state.internet_performer_results = get_person_details(query)
+            else:
+                st.session_state.internet_performer_results = None
+
+        if st.session_state.performer_query:
+            if st.session_state.local_performer_results is not None:
                 st.subheader("📊 Результаты из вашей базы данных")
-                for _, row in local_results.iterrows():
+                for _, row in st.session_state.local_performer_results.iterrows():
                     details = (d[0] if (d := get_person_details(row["Name"])) else None)
                     st.markdown(f"<div style='background-color:#28a745; padding: 10px; border-radius: 5px; color: white; margin-bottom: 10px;'><b>{row['Name']}</b></div>", unsafe_allow_html=True)
                     col1, col2 = st.columns([1, 2.5])
@@ -280,11 +284,10 @@ if dataframes:
                     display_list(clean_notion_links(row.get('Сыгранные/озвученные персонажи')), "Персонажи")
                     st.divider()
             else:
-                st.warning("В вашей базе ничего не найдено. Выполняется поиск в интернете...")
-                internet_results = get_person_details(query)
-                if internet_results:
+                st.warning(f"В вашей базе ничего не найдено по запросу: '{st.session_state.performer_query}'. Выполняется поиск в интернете...")
+                if st.session_state.internet_performer_results:
                     st.subheader("🌐 Найдено в интернете (TMDb)")
-                    for res in internet_results:
+                    for res in st.session_state.internet_performer_results:
                         st.markdown(f"<div style='background-color:#17a2b8; padding: 10px; border-radius: 5px; color: white; margin-bottom: 10px;'><b>{res['name']}</b></div>", unsafe_allow_html=True)
                         col1, col2 = st.columns([1, 2.5])
                         with col1:
