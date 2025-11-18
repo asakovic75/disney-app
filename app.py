@@ -129,21 +129,43 @@ def get_person_details(query):
 
 @st.cache_data
 def get_movie_reviews(movie_id):
-    if not movie_id: return []
+    if not movie_id:
+        return []
+    
     all_reviews = []
-    for page in range(1, 4):
-        reviews_url = f"{tmdb_api_base_url}/movie/{movie_id}/reviews"
-        params = {"api_key": TMDB_API_KEY, "page": page}
-        try:
-            response = requests.get(reviews_url, params=params)
-            response.raise_for_status()
-            data = response.json()
-            reviews = data.get("results", [])
-            if not reviews:
-                break
-            all_reviews.extend(reviews)
-        except requests.exceptions.RequestException:
-            break
+    seen_review_ids = set()
+    
+    # Список языков для запроса: сначала русский, потом без указания языка (по умолчанию)
+    languages_to_fetch = ["ru-RU", None] 
+    
+    for lang in languages_to_fetch:
+        # Увеличиваем количество страниц для сканирования
+        for page in range(1, 8):
+            reviews_url = f"{tmdb_api_base_url}/movie/{movie_id}/reviews"
+            
+            params = {"api_key": TMDB_API_KEY, "page": page}
+            if lang:
+                params["language"] = lang
+                
+            try:
+                response = requests.get(reviews_url, params=params)
+                response.raise_for_status()
+                data = response.json()
+                reviews = data.get("results", [])
+                
+                if not reviews:
+                    break  # Если страница пуста, прекращаем поиск для этого языка
+                    
+                for review in reviews:
+                    review_id = review.get('id')
+                    # Добавляем отзыв, только если его еще не было
+                    if review_id and review_id not in seen_review_ids:
+                        all_reviews.append(review)
+                        seen_review_ids.add(review_id)
+                        
+            except requests.exceptions.RequestException:
+                break # Прекращаем поиск для этого языка при ошибке
+                
     return all_reviews
 
 st.set_page_config(page_title="Умный поиск по миру Disney", layout="wide")
