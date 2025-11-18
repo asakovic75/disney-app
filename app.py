@@ -40,7 +40,11 @@ def find_entity_by_name(query, dataframe):
 
 def clean_notion_links(text):
     if not isinstance(text, str): return ["-"]
+    # Сначала удаляем полные ссылки
     cleaned_text = re.sub(r"https://www.notion.so/[\w-]+", "", text)
+    # Затем удаляем артефакты типа " (?pvs=21)"
+    cleaned_text = re.sub(r"\s\(\?pvs=.*?\)", "", cleaned_text)
+    # И только потом разделяем на элементы
     items = [item.strip().strip('"') for item in cleaned_text.split(',')]
     return items
 
