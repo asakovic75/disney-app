@@ -298,4 +298,4 @@ if dataframes:
                             display_list(res['filmography'], "Избранная фильмография (по популярности)")
                         st.divider()
                 else:
-                    st.error("В интернете также ничего не найдено.")```
+                    st.error("В интернете также ничего не найдено.")
