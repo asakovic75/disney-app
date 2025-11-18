@@ -40,13 +40,22 @@ def find_entity_by_name(query, dataframe):
 
 def clean_notion_links(text):
     if not isinstance(text, str): return ["-"]
-    cleaned_text = re.sub(r"\(https://www.notion.so/[^)]+\)", "", text)
+    cleaned_text = re.sub(r"https://www.notion.so/[\w-]+", "", text)
     items = [item.strip().strip('"') for item in cleaned_text.split(',')]
     return items
 
+def clean_review_content(text):
+    if not isinstance(text, str): return ""
+    text = re.sub(r'https?://\S+', '', text)
+    text = re.sub(r'(?i)read\s+.*?\s+full\s+(article|review).*', '', text)
+    text = re.sub(r'(?im)^\s*read the full review.*\s*$', '', text)
+    text = re.sub(r'(?i)read more at.*', '', text)
+    text = '\n'.join([line.strip() for line in text.split('\n') if line.strip()])
+    return text if text else "Нет текста."
+
 def display_field(label, value, extra=""):
     if pd.notna(value) and str(value).strip() not in ['', '-']:
-        st.write(f"**{label}:** {value}{extra}")
+        st.write(f"{label}: {value}{extra}")
 
 def display_list(items_list, title):
     with st.expander(title):
@@ -137,7 +146,6 @@ def get_movie_reviews(movie_id):
             break
     return all_reviews
 
-
 st.set_page_config(page_title="Умный поиск по миру Disney", layout="wide")
 st.title("✨ Умный поиск по миру Disney")
 
@@ -194,22 +202,31 @@ if dataframes:
                         if st.button("Показать отзывы", key=f"review_local_{index}"):
                             with st.spinner("Загрузка отзывов..."):
                                 reviews = get_movie_reviews(movie_id)
-                                st.write("#### Отзывы:")
                                 if reviews:
-                                    for review in reviews:
+                                    ratings = [r['author_details']['rating'] for r in reviews if r.get('author_details', {}).get('rating') is not None]
+                                    if ratings:
+                                        average_rating = sum(ratings) / len(ratings)
+                                        st.metric(label="Средняя оценка по отзывам", value=f"{average_rating:.2f} / 10", delta=f"На основе {len(ratings)} оценок")
+                                    else:
+                                        st.info("В загруженных отзывах нет оценок.")
+
+                                    st.write(f"#### Последние {min(len(reviews), 20)} отзывов:")
+                                    latest_reviews = sorted(reviews, key=lambda r: r.get('created_at', ''), reverse=True)[:20]
+                                    for review in latest_reviews:
                                         author, content, created_str = review.get('author', 'Аноним'), review.get('content', 'Нет текста.'), review.get('created_at')
+                                        cleaned_content = clean_review_content(content)
                                         try:
                                             created_dt = datetime.datetime.strptime(created_str, "%Y-%m-%dT%H:%M:%S.%fZ")
                                             date_display = created_dt.strftime("%d.%m.%Y в %H:%M")
                                         except (ValueError, TypeError): date_display = "Неизвестная дата"
                                         with st.expander(f"Отзыв от **{author}** ({date_display})"):
-                                            st.markdown(content)
+                                            st.markdown(cleaned_content)
                                 else:
                                     st.info("Для этого фильма не найдено отзывов.")
                     st.divider()
             else:
                 st.warning(f"В вашей базе ничего не найдено по запросу: '{st.session_state.work_query}'")
-            
+
             st.subheader("🌐 Найдено в интернете (TMDb)")
             new_results_found = False
             if st.session_state.internet_work_results:
@@ -229,25 +246,34 @@ if dataframes:
                         display_field("Студия", res.get('companies')); display_field("Бюджет", f"${res.get('budget'):,}" if res.get('budget', 0) > 0 else "Не указан")
                         display_field("Сборы", f"${res.get('revenue'):,}" if res.get('revenue', 0) > 0 else "Не указаны")
                     with st.expander("Сюжет"): st.write(res.get('overview'))
-                    
+
                     movie_id = res['id']
                     if st.button("Показать отзывы", key=f"review_inet_{movie_id}"):
                         with st.spinner("Загрузка отзывов..."):
                             reviews = get_movie_reviews(movie_id)
-                            st.write("#### Отзывы:")
                             if reviews:
-                                for review in reviews:
+                                ratings = [r['author_details']['rating'] for r in reviews if r.get('author_details', {}).get('rating') is not None]
+                                if ratings:
+                                    average_rating = sum(ratings) / len(ratings)
+                                    st.metric(label="Средняя оценка по отзывам", value=f"{average_rating:.2f} / 10", delta=f"На основе {len(ratings)} оценок")
+                                else:
+                                    st.info("В загруженных отзывах нет оценок.")
+                                
+                                st.write(f"#### Последние {min(len(reviews), 20)} отзывов:")
+                                latest_reviews = sorted(reviews, key=lambda r: r.get('created_at', ''), reverse=True)[:20]
+                                for review in latest_reviews:
                                     author, content, created_str = review.get('author', 'Аноним'), review.get('content', 'Нет текста.'), review.get('created_at')
+                                    cleaned_content = clean_review_content(content)
                                     try:
                                         created_dt = datetime.datetime.strptime(created_str, "%Y-%m-%dT%H:%M:%S.%fZ")
                                         date_display = created_dt.strftime("%d.%m.%Y в %H:%M")
                                     except (ValueError, TypeError): date_display = "Неизвестная дата"
                                     with st.expander(f"Отзыв от **{author}** ({date_display})"):
-                                        st.markdown(content)
+                                        st.markdown(cleaned_content)
                             else:
                                 st.info("Для этого фильма не найдено отзывов.")
                     st.divider()
-            if not new_results_found: 
+            if not new_results_found:
                 st.info("Все релевантные Disney-фильмы из интернета уже показаны в вашей базе данных или не найдены.")
 
     elif search_type == "Исполнитель":
