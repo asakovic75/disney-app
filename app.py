@@ -1,7 +1,4 @@
 # --- БЛОК 1: ИМПОРТ БИБЛИОТЕК ---
-# Импортируем необходимые библиотеки: Streamlit для веб-интерфейса, Pandas для работы с данными,
-# requests для API-запросов, re для очистки текста, base64 для кодирования изображений
-# и datetime для форматирования дат.
 import streamlit as st
 import pandas as pd
 import requests
@@ -11,19 +8,15 @@ from io import BytesIO
 import datetime
 
 # --- БЛОК 2: НАСТРОЙКА И КОНСТАНТЫ ---
-# Задаем ключ для доступа к API The Movie Database (TMDB) и базовый URL.
-# Указываем ID компаний Disney для точной фильтрации результатов поиска.
 TMDB_API_KEY = st.secrets.get("TMDB_API_KEY", "YOUR_TMDB_API_KEY_HERE")
 tmdb_api_base_url = "https://api.themoviedb.org/3"
 DISNEY_COMPANY_IDS_STR = "2|3|6125|420|1|10282|127928"
 
 # --- БЛОК 3: ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
-# Этот блок содержит функции для общих задач: загрузка изображений,
-# чтение локальных CSV-файлов, поиск по DataFrame и форматирование данных для вывода.
 
 @st.cache_data
 def get_image_as_base64(url):
-    """Загружает изображение и кодирует его в Base64 для вставки в HTML."""
+    """Загружает изображение и кодирует его в Base64."""
     if not url or not url.startswith("http"):
         return None
     try:
@@ -38,10 +31,7 @@ def get_image_as_base64(url):
 def load_data():
     """Загружает и кэширует данные из локальных CSV-файлов."""
     try:
-        data = {
-            "works": pd.read_csv("Произведения.csv"),
-            "performers": pd.read_csv("Исполнители.csv"),
-        }
+        data = { "works": pd.read_csv("Произведения.csv"), "performers": pd.read_csv("Исполнители.csv") }
         data["works"]["Name"] = data["works"]["Name"].astype(str)
         data["performers"]["Name"] = data["performers"]["Name"].astype(str)
         return data
@@ -50,25 +40,21 @@ def load_data():
         return None
 
 def find_entity_by_name(query, dataframe):
-    """Ищет запись по имени в предоставленном DataFrame."""
     if dataframe is None or not query: return None
     result = dataframe[dataframe["Name"].str.contains(query, case=False, na=False)]
     return result if not result.empty else None
 
 def clean_notion_links(text):
-    """Удаляет гиперссылки Notion из текстовых полей."""
     if not isinstance(text, str): return ["-"]
     cleaned_text = re.sub(r"\(https://www.notion.so/[^)]+\)", "", text)
     items = [item.strip().strip('"') for item in cleaned_text.split(',')]
     return items
 
 def display_field(label, value, extra=""):
-    """Выводит пару "Метка: Значение", если значение не пустое."""
     if pd.notna(value) and str(value).strip() not in ['', '-']:
         st.write(f"**{label}:** {value}{extra}")
 
 def display_list(items_list, title):
-    """Выводит список элементов под раскрывающимся заголовком."""
     with st.expander(title):
         if items_list and items_list != ['-']:
             for item in items_list: st.markdown(f"- {item.strip()}")
@@ -76,18 +62,13 @@ def display_list(items_list, title):
             st.write("Нет данных.")
 
 # --- БЛОК 4: ФУНКЦИИ ДЛЯ РАБОТЫ С TMDB API ---
-# Этот блок отвечает за все взаимодействия с внешним API: поиск фильмов,
-# получение детальной информации о фильмах и актерах, а также поиск отзывов.
 
 def get_movie_details(query, year=None):
-    """Ищет фильмы в TMDB, фильтрует по компаниям Disney и возвращает детальную информацию."""
+    """Ищет фильмы, фильтрует по Disney и возвращает детальную информацию, ВКЛЮЧАЯ ID ФИЛЬМА."""
     if not TMDB_API_KEY or TMDB_API_KEY == "YOUR_TMDB_API_KEY_HERE": return []
     search_query = query.split(':')[0].strip() if ':' in query else query
     discover_url = f"{tmdb_api_base_url}/discover/movie"
-    params = {
-        "api_key": TMDB_API_KEY, "language": "ru-RU",
-        "with_text_query": search_query, "with_companies": DISNEY_COMPANY_IDS_STR
-    }
+    params = {"api_key": TMDB_API_KEY, "language": "ru-RU", "with_text_query": search_query, "with_companies": DISNEY_COMPANY_IDS_STR}
     if year: params['primary_release_year'] = year
     try:
         response = requests.get(discover_url, params=params)
@@ -104,7 +85,9 @@ def get_movie_details(query, year=None):
             poster_path = movie_details.get("poster_path")
             genres = [genre['name'] for genre in movie_details.get('genres', [])]
             companies = [comp['name'] for comp in movie_details.get('production_companies', [])]
+            # --- ИЗМЕНЕНИЕ: Добавляем 'id' в возвращаемый словарь ---
             disney_movies.append({
+                "id": movie_id,
                 "title": movie_details.get("title"), "overview": movie_details.get("overview", "Сюжет не найден."),
                 "image_url": f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else None,
                 "release_date": movie_details.get("release_date"), "vote_average": movie_details.get("vote_average"),
@@ -116,7 +99,7 @@ def get_movie_details(query, year=None):
         return []
 
 def get_person_details(query):
-    """Ищет персон (актеров, режиссеров) в TMDB и возвращает детальную информацию."""
+    """Ищет персон в TMDB (без изменений)."""
     if not TMDB_API_KEY or TMDB_API_KEY == "YOUR_TMDB_API_KEY_HERE": return []
     search_url = f"{tmdb_api_base_url}/search/person"
     params = {"api_key": TMDB_API_KEY, "query": query, "language": "ru-RU"}
@@ -148,35 +131,28 @@ def get_person_details(query):
         return []
 
 @st.cache_data
-def search_movies_for_reviews(query):
-    """Ищет фильмы для последующего выбора и получения отзывов."""
-    if not TMDB_API_KEY or TMDB_API_KEY == "YOUR_TMDB_API_KEY_HERE" or not query: return []
-    search_url = f"{tmdb_api_base_url}/search/movie"
-    params = {"api_key": TMDB_API_KEY, "query": query, "language": "ru-RU"}
-    try:
-        response = requests.get(search_url, params=params)
-        response.raise_for_status()
-        data = response.json()
-        return [{"id": m.get("id"), "title": m.get("title"), "release_date": m.get("release_date")} for m in data.get("results", [])]
-    except requests.exceptions.RequestException:
-        return []
-
-@st.cache_data
 def get_movie_reviews(movie_id):
-    """Получает список отзывов для фильма по его ID."""
+    """Получает до 3 страниц отзывов для фильма по его ID."""
     if not movie_id: return []
-    reviews_url = f"{tmdb_api_base_url}/movie/{movie_id}/reviews"
-    params = {"api_key": TMDB_API_KEY}
-    try:
-        response = requests.get(reviews_url, params=params)
-        response.raise_for_status()
-        return response.json().get("results", [])
-    except requests.exceptions.RequestException:
-        return []
+    all_reviews = []
+    # --- ИЗМЕНЕНИЕ: Цикл для загрузки нескольких страниц ---
+    for page in range(1, 4): # Загружаем страницы 1, 2, 3
+        reviews_url = f"{tmdb_api_base_url}/movie/{movie_id}/reviews"
+        params = {"api_key": TMDB_API_KEY, "page": page}
+        try:
+            response = requests.get(reviews_url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            reviews = data.get("results", [])
+            if not reviews: # Если на странице нет отзывов, прекращаем
+                break
+            all_reviews.extend(reviews)
+        except requests.exceptions.RequestException:
+            break # В случае ошибки прекращаем
+    return all_reviews
+
 
 # --- БЛОК 5: ГЛАВНАЯ ЧАСТЬ ПРИЛОЖЕНИЯ (ИНТЕРФЕЙС) ---
-# Здесь описывается вся логика веб-интерфейса: заголовок, боковая панель
-# и обработка действий пользователя для каждой из трех вкладок.
 
 st.set_page_config(page_title="Умный поиск по миру Disney", layout="wide")
 st.title("✨ Умный поиск по миру Disney")
@@ -184,9 +160,8 @@ st.title("✨ Умный поиск по миру Disney")
 dataframes = load_data()
 
 if dataframes:
-    # Навигация в боковой панели
     st.sidebar.title("Навигация")
-    search_type = st.sidebar.radio("Выберите раздел:", ("Произведение", "Исполнитель", "Отзывы"))
+    search_type = st.sidebar.radio("Выберите раздел:", ("Произведение", "Исполнитель"))
 
     # --- ВКЛАДКА "ПРОИЗВЕДЕНИЕ" ---
     if search_type == "Произведение":
@@ -196,7 +171,7 @@ if dataframes:
             displayed_items, local_results = set(), find_entity_by_name(query, dataframes["works"])
             if local_results is not None:
                 st.subheader("📊 Результаты из вашей базы данных")
-                for _, row in local_results.iterrows():
+                for index, row in local_results.iterrows():
                     year = int(row['Год выпуска']) if pd.notna(row['Год выпуска']) else 0
                     title_cleaned = row['Name'].split(':')[0].strip().lower()
                     displayed_items.add((title_cleaned, year))
@@ -215,9 +190,29 @@ if dataframes:
                         with st.expander("Сюжет"): st.write(details['overview'])
                     display_list(clean_notion_links(row.get('Персонажи')), "Персонажи"); display_list(clean_notion_links(row.get('Исполнители')), "Исполнители")
                     display_list(clean_notion_links(row.get('Песни')), "Песни")
+
+                    # Блок для отображения отзывов для локальных результатов
+                    if details:
+                        movie_id = details['id']
+                        if st.button("Показать отзывы", key=f"review_local_{index}"):
+                            with st.spinner("Загрузка отзывов..."):
+                                reviews = get_movie_reviews(movie_id)
+                                st.write("#### Отзывы:")
+                                if reviews:
+                                    for review in reviews:
+                                        author, content, created_str = review.get('author', 'Аноним'), review.get('content', 'Нет текста.'), review.get('created_at')
+                                        try:
+                                            created_dt = datetime.datetime.strptime(created_str, "%Y-%m-%dT%H:%M:%S.%fZ")
+                                            date_display = created_dt.strftime("%d.%m.%Y в %H:%M")
+                                        except (ValueError, TypeError): date_display = "Неизвестная дата"
+                                        with st.expander(f"Отзыв от **{author}** ({date_display})"):
+                                            st.markdown(content)
+                                else:
+                                    st.info("Для этого фильма не найдено отзывов.")
                     st.divider()
             else:
                 st.warning("В вашей базе ничего не найдено.")
+            
             st.subheader("🌐 Найдено в интернете (TMDb)")
             internet_results, new_results_found = get_movie_details(query), False
             if internet_results:
@@ -237,6 +232,24 @@ if dataframes:
                         display_field("Студия", res.get('companies')); display_field("Бюджет", f"${res.get('budget'):,}" if res.get('budget', 0) > 0 else "Не указан")
                         display_field("Сборы", f"${res.get('revenue'):,}" if res.get('revenue', 0) > 0 else "Не указаны")
                     with st.expander("Сюжет"): st.write(res.get('overview'))
+                    
+                    # Блок для отображения отзывов для интернет-результатов
+                    movie_id = res['id']
+                    if st.button("Показать отзывы", key=f"review_inet_{movie_id}"):
+                        with st.spinner("Загрузка отзывов..."):
+                            reviews = get_movie_reviews(movie_id)
+                            st.write("#### Отзывы:")
+                            if reviews:
+                                for review in reviews:
+                                    author, content, created_str = review.get('author', 'Аноним'), review.get('content', 'Нет текста.'), review.get('created_at')
+                                    try:
+                                        created_dt = datetime.datetime.strptime(created_str, "%Y-%m-%dT%H:%M:%S.%fZ")
+                                        date_display = created_dt.strftime("%d.%m.%Y в %H:%M")
+                                    except (ValueError, TypeError): date_display = "Неизвестная дата"
+                                    with st.expander(f"Отзыв от **{author}** ({date_display})"):
+                                        st.markdown(content)
+                            else:
+                                st.info("Для этого фильма не найдено отзывов.")
                     st.divider()
             if not new_results_found: st.info("Все релевантные Disney-фильмы из интернета уже показаны в вашей базе данных или не найдены.")
 
@@ -285,51 +298,4 @@ if dataframes:
                             display_list(res['filmography'], "Избранная фильмография (по популярности)")
                         st.divider()
                 else:
-                    st.error("В интернете также ничего не найдено.")
-
-    # --- ВКЛАДКА "ОТЗЫВЫ" ---
-    elif search_type == "Отзывы":
-        st.header("💬 Поиск отзывов к фильмам")
-
-        # Используем st.session_state для сохранения результатов поиска между действиями пользователя
-        if 'review_search_results' not in st.session_state:
-            st.session_state.review_search_results = None
-        if 'selected_movie_id' not in st.session_state:
-            st.session_state.selected_movie_id = None
-
-        review_query = st.text_input("Введите название фильма:", "Аладдин")
-        
-        if st.button("🔍 Найти фильмы", key="review_search"):
-            with st.spinner("Идет поиск фильмов..."):
-                st.session_state.review_search_results = search_movies_for_reviews(review_query)
-                st.session_state.selected_movie_id = None
-
-        if st.session_state.review_search_results:
-            movies_found = st.session_state.review_search_results
-            movie_options = {
-                f"{movie['title']} ({movie['release_date'][:4] if movie['release_date'] else 'N/A'})": movie['id']
-                for movie in movies_found if movie['id']
-            }
-            options_list = ["-- Выберите фильм для просмотра отзывов --"] + list(movie_options.keys())
-            selected_movie_title = st.selectbox("Найденные фильмы:", options=options_list)
-
-            if selected_movie_title != "-- Выберите фильм для просмотра отзывов --":
-                st.session_state.selected_movie_id = movie_options[selected_movie_title]
-
-        if st.session_state.selected_movie_id:
-            with st.spinner("Загрузка отзывов..."):
-                reviews = get_movie_reviews(st.session_state.selected_movie_id)
-                st.subheader(f"Отзывы:")
-                if reviews:
-                    for review in reviews:
-                        author, content, created_str = review.get('author', 'Аноним'), review.get('content', 'Нет текста.'), review.get('created_at')
-                        try:
-                            created_dt = datetime.datetime.strptime(created_str, "%Y-%m-%dT%H:%M:%S.%fZ")
-                            date_display = created_dt.strftime("%d.%m.%Y в %H:%M")
-                        except (ValueError, TypeError):
-                            date_display = "Неизвестная дата"
-                        with st.expander(f"Отзыв от **{author}** ({date_display})"):
-                            st.markdown(content)
-                else:
-                    st.info("Для этого фильма не найдено отзывов в базе TMDb.")
-
+                    st.error("В интернете также ничего не найдено.")```
