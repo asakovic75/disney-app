@@ -231,4 +231,4 @@ if dataframes:
                             with st.expander("Биография"): st.write(res['biography'])
                     st.divider()
             if not new_results_found:
-                st.info("Новых исполнителей в интернете не найдено.")```
+                st.info("Новых исполнителей в интернете не найдено.")
