@@ -318,7 +318,7 @@ if dataframes:
                         with st.expander("Биография"): st.write(details['biography'])
                     if details and details.get('filmography'):
                         display_list(details['filmography'], "Избранная фильмография (по популярности)")
-                    display_list(clean_notion_links(row.get('Фильмография')), "Фильмография (из вашей базы)")
+                    display_list(clean_notion_links(row.get('Фильмография')), "Фильмография (из базы)")
                     display_list(clean_notion_links(row.get('Сыгранные/озвученные персонажи')), "Персонажи")
                     st.divider()
             else:
@@ -340,3 +340,4 @@ if dataframes:
                         st.divider()
                 else:
                     st.error("В интернете также ничего не найдено.")
+
